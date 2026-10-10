@@ -164,3 +164,4 @@ Every decision, run and dead end, written as it happens.
   - **Lint verified in the pod: 0 hits on every correct kernel** (handwritten/*, agent_solutions/*, reference_level*); **fires on 39/39 failing c8 L8 attempts**, listing up to 5 problems at once.
   - L8 gets 12 rounds.
   - Because v9 changes feedback at every level, **C10 = C9 + v9 runs on ALL levels L1–L8 × 5** (combo10 on all 5 seats, md5 equal) and becomes the final-agent measurement.
+- **16:06** **C9 complete** (with C9b for L1/L2): **Stage B L1–L7 all 5/5 in one agent configuration**, L8 0/5. **Stage A v3 complete: 8/10 levels** (A5, A8 fail). Early C10 (+v9): L1 5/5, L2 5/5. Early Stage A v4: **A8 1/2 solved (first A8 solve)**, but A3 0.88, A4 0.95 and A7 0.90 are below v3 so far. This is a possible v4 side effect of the snippet renaming on the levels v3 already solved, to be checked when it completes.

@@ -66,3 +66,4 @@ Every decision, run and dead end, written as it happens.
     - `DIRECTION ZERO, SHIFTED, SIGN-FLIPPED, SCALED, TOO-LARGE/SMALL, MIXED`
     - The old message called the whole (8,16) array "the final partial tile". It now says SUB-TILE-SHAPE.
   - The case "correct softmax ~1e-12 tails false-fail" turned out NOT to be real (relative accuracy holds; the old 1e-30 floor acts as an atol). The real false-fail is **cancellation**: a correct softmax-backward kernel fails under the old check and passes under the new one.
+- **12:24** GitHub: logged in as qz2930-crypto. Created the public repo https://github.com/qz2930-crypto/hack-the-chip-seat73 and pushed. Before pushing, scanned the full history for the AWS key id, secret and session token: no hits. From now on: commit + push after every phase and after every ADOPT/REVERT.

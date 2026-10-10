@@ -556,6 +556,9 @@ def main():
     ap.add_argument("--v2-verdicts", action="store_true",
                     help="code-aware translations found in E1 transcripts (swapped axes, "
                          "collapsed partition axis)")
+    ap.add_argument("--v3-verdicts", action="store_true",
+                    help="level-1 window-reduction instruction (scalar nl.sum + element assignment "
+                         "-> tensor_reduce into a (C,1) tile), from E1/C1 transcripts")
     ap.add_argument("--directional", action="store_true",
                     help="numerical feedback names the direction of the error, never the target "
                          "value (nkibench.DIRECTIONAL)")
@@ -565,6 +568,7 @@ def main():
     a.run_index = 0
     nkibench.DIRECTIONAL = a.directional
     verdicts.V2 = a.v2_verdicts
+    verdicts.V3 = a.v3_verdicts
 
     if not a.offline:
         # Validate before the first request. An empty or scheme-less value produces a hostname

@@ -111,6 +111,24 @@ def code_hint(code, level):
             f"Change only that slice.")
 
 
+# v3 (C2): level 1's remaining wall, read from E1/C1 transcripts. The model computes each pooling
+# window as a SCALAR (nl.sum(window) / .reshape) and assigns it element-wise with Python `=`
+# (sum_tile[c, h, w] = ...). That is what produces both the 1-D tile and the collapsed partition
+# axis; v2's "keep the partition axis whole" fixes half of it. The missing piece is ONE API idiom:
+# reduce a window into a (C, 1) tile with nisa.tensor_reduce and tensor_copy it into a column of the
+# output tile. Source: neuron-nki-writing/references/api-translation.md (Reduction Operations row).
+V3 = False
+_SCALAR_REDUCE = re.compile(r"\bnl\.sum\(|\.reshape\(|\w+\[[^\]]+\]\s*=\s*(?!nl\.ndarray)")
+
+
+def _i_window_reduce(code):
+    return (" Each pooling window must be reduced into a TILE, not a scalar, and tiles are never "
+            "assigned with `=`. For window (h, w): allocate s = nl.ndarray((C, 1), dtype=nl.float32, "
+            "buffer=nl.sbuf), then nisa.tensor_reduce(dst=s, data=in_tile[:, h*p:(h+1)*p, "
+            "w*p:(w+1)*p], op=nl.add, axis=(1, 2)), then nisa.tensor_copy(dst=sum_tile[:, h, "
+            "w:w+1], src=s). Keep the partition axis whole (':') and drop any loop over it.")
+
+
 _PARTITION_COLLAPSED = re.compile(r"Partition dim size must be preserved, got (\d+) -> (\d+)")
 
 
@@ -275,6 +293,9 @@ _COMPILED = [(b, re.compile(p, re.S), f) for b, p, f in RULES]
 def translate(error_text, code=None, level=None):
     """(bucket, error_text + instruction). Unknown errors pass through with bucket 'raised_other'.
     With V2 on and the code/level supplied, code-aware rules may replace the v1 instruction."""
+    if V3 and level == 1 and code and _SCALAR_REDUCE.search(code) and (
+            _PARTITION_COLLAPSED.search(error_text) or "at least 2 dimensions" in error_text):
+        return "scalar_window_reduce", error_text + _i_window_reduce(code)
     if V2:
         m = _PARTITION_COLLAPSED.search(error_text)
         if m:
@@ -331,6 +352,8 @@ def classify(feedback):
     for bucket, pat in _STAGES:
         if re.search(pat, fb, re.S):
             return bucket
+    if "must be reduced into a TILE, not a scalar" in fb:
+        return "scalar_window_reduce"
     if "lists the axes in the wrong order" in fb:
         return "swapped_axes"
     if _PARTITION_COLLAPSED.search(fb):
@@ -432,6 +455,18 @@ def selftest():
                   "preserved, got 1 -> 4 You indexed") == "partition_collapsed"
     bad += not ok
     print(f"  {'ok  ' if ok else 'FAIL'} v2 classify partition_collapsed")
+    global V3
+    V3 = True
+    l1 = ("for c in nl.affine_range(C):\n    sum_tile[c, h, w] = nl.sum(window.reshape((4,)))")
+    b, txt = translate("AssertionError: SBUF and PSUM tensors must have at least 2 dimensions", l1, 1)
+    ok = b == "scalar_window_reduce" and "tensor_reduce" in txt and classify(txt) == b
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} v3 scalar window reduce -> {b}")
+    b, _ = translate("AssertionError: SBUF and PSUM tensors must have at least 2 dimensions", l1, 3)
+    ok = b == "tile_1d"
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} v3 only on level 1       -> {b}")
+    V3 = False
     V2 = False
     b, _ = translate(err, code, 3)
     ok = b == "out_of_bounds"

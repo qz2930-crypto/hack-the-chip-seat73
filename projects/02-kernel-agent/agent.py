@@ -133,8 +133,9 @@ def grade(source, level):
             return (sum(WEIGHTS[k] for k, v in parts.items() if v), parts,
                     f"CANNOT SIMULATE: {e}")
         except Exception as e:
-            failures.append((nkibench.label(case, level),
-                             enrich(f"raised {type(e).__name__}: {e}", source, level)))
+            msg = enrich(f"raised {type(e).__name__}: {e}", source, level)
+            msg += verdicts.l8_hint(msg, source, level)   # '' unless --v8-verdicts finds a cause
+            failures.append((nkibench.label(case, level), msg))
             continue
         parts["runs"] = True
         m = (nkibench.check_inputs_untouched(before, args)
@@ -145,6 +146,8 @@ def grade(source, level):
         if m and m.startswith("NON-FINITE OUTPUT"):
             m += verdicts.nonfinite_hint(source)          # '' unless --v6-verdicts finds a cause
             m += verdicts.unloaded_hint(source, level)    # '' unless --v7-verdicts finds a cause
+        if m and (m.startswith("NUMERICAL MISMATCH") or m.startswith("NON-FINITE OUTPUT")):
+            m += verdicts.kloop_hint(source, level)       # '' unless --v8-verdicts finds a cause
         if m and m.startswith("CORRECT, BUT TOO MUCH HBM TRAFFIC"):
             m += verdicts.traffic_hint(source, level)    # '' unless --v4-verdicts finds a cause
         # A simulator warning about a hardware-correctness hazard counts as a failure even when the
@@ -378,6 +381,11 @@ def offline_answers(level, n, rnd):
 def build_first(a, level, terse):
     """The first prompt, and the parts inserted into it (for token accounting)."""
     prompt = first_prompt(level, terse)
+    if a.prompt_fixes and not (3 <= level <= 7):
+        # the API card's matmul paragraph says "The left operand arrives already transposed"; true
+        # for levels 3-7 only -- at L8 the model took it to mean k needs no transpose (LOG 15:2x)
+        prompt = prompt.replace("The left operand arrives already transposed, with K on the "
+                                "partition axis.", "")
     parts = dict(api=API_CARD if API_CARD in prompt else "")
     if a.skeleton:
         sk = levers.skeleton(level)
@@ -576,6 +584,13 @@ def main():
                     help="NaN from exp without max-subtraction is an overflow, say so")
     ap.add_argument("--v7-verdicts", action="store_true",
                     help="NaN because lhsT/rhs tiles were allocated but never dma_copy'd: say which")
+    ap.add_argument("--v8-verdicts", action="store_true",
+                    help="L5-7: name the k loop placed outside m/n; L8: name the PSUM/SBUF one-name "
+                         "conflation and the assumed-pretransposed q/k/v")
+    ap.add_argument("--prompt-fixes", action="store_true",
+                    help="L6 traffic hint = L7's (accumulate in one PSUM tile across the contraction); "
+                         "API card's 'already transposed' only for levels 3-7; L8 skeleton names "
+                         "the separate psum and sbuf tiles")
     ap.add_argument("--directional", action="store_true",
                     help="numerical feedback names the direction of the error, never the target "
                          "value (nkibench.DIRECTIONAL)")
@@ -590,6 +605,8 @@ def main():
     verdicts.V5 = a.v5_verdicts
     verdicts.V6 = a.v6_verdicts
     verdicts.V7 = a.v7_verdicts
+    verdicts.V8 = a.v8_verdicts
+    nkibench.PROMPT_FIXES = levers.PROMPT_FIXES = a.prompt_fixes
 
     if not a.offline:
         # Validate before the first request. An empty or scheme-less value produces a hostname

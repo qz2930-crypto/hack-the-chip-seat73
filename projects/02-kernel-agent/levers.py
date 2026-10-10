@@ -95,6 +95,12 @@ def nki_attention_(q, k, v):
 '''
 
 
+PROMPT_FIXES = False
+_SK_ATTN_FIX = ("    # TODO: qT (D, S) in SBUF: nisa.nc_transpose(dst=qT_p, data=q_t) into its OWN psum tile qT_p,\n"
+                "    #       then nisa.tensor_copy(dst=qT, src=qT_p) into a SEPARATE sbuf tile qT; same for kT\n"
+                "    #       (no .T on the inputs; a psum tile and an sbuf tile never share a name)\n")
+
+
 def skeleton(level):
     entry = nkibench.LEVELS[level]["entry"]
     if level == 1:
@@ -105,6 +111,9 @@ def skeleton(level):
         body = _SK_MATMUL.format(entry=entry)
     elif level == 8:
         body = _SK_ATTN
+        if PROMPT_FIXES:
+            body = re.sub(r"    # TODO: qT and kT of shape \(D, S\) in SBUF.*?\n.*?\n", _SK_ATTN_FIX, body,
+                          count=1, flags=re.S)
     else:
         return ""
     return ("Fill in this structure. Keep every line that is already written; replace each TODO "

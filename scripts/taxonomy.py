@@ -55,6 +55,12 @@ DEFS = {
     "contraction_mismatch": ("nc_matmul operands disagree on K -- often nc_matmul used for a "
                              "non-matmul op", "same first dim for both operands, or do not use "
                              "nc_matmul for data movement"),
+    "kloop_outside": ("[L5-7] contraction loop k outside m/n: fresh PSUM per k, nothing accumulates",
+                      "m, n, then k innermost; one psum acc per (m, n) (--v8)"),
+    "psum_sbuf_conflated": ("[L8] one name for the PSUM tile and the SBUF tile",
+                            "two tiles: transpose/matmul into psum, tensor_copy into a separate sbuf tile (--v8)"),
+    "assumed_pretransposed": ("[L8] q/k/v fed to nc_matmul from HBM as if already transposed",
+                              "dma_copy to SBUF, nc_transpose into psum, copy to SBUF (--v8)"),
     "tiles_never_loaded": ("[L5-7] tiles allocated for reuse but never dma_copy'd -> NaN",
                            "fill each tile with dma_copy right after allocating it (--v7)"),
     "exp_overflow": ("[L8] NaN because exp() overflowed (no row-max subtraction)",

@@ -432,6 +432,7 @@ def check_rules(src, level_n):
 # with --directional; the upstream message (expected X, got Y) stays the default so that A/B rows
 # measured before the switch remain comparable.
 DIRECTIONAL = False
+PROMPT_FIXES = False
 
 
 def _direction(g, w):
@@ -634,12 +635,18 @@ def check_traffic_bar(level_n, counted, args, want):
     waste = counted["bytes"] / floor
     if waste <= bar:
         return None
+    if PROMPT_FIXES and level_n == 6:
+        # measured: the level-6 sentence below pulls the model to a k-outer loop after load-once
+        # (26/38 failing L6 attempts); level 7's sentence, which it implements, is used instead
+        level_n_hint = 7
+    else:
+        level_n_hint = level_n
     hint = {5: "Hoist the operand loads out of the innermost loop; the same tiles are being re-read "
                "on every pass.",
             6: "Block the M and N dimensions so more tiles stay resident in SBUF and are reused "
                "across iterations, rather than reloaded.",
             7: "Block K as well, and accumulate in one PSUM tile across the whole contraction so "
-               "nothing partial is written out."}.get(level_n, "")
+               "nothing partial is written out."}.get(level_n_hint, "")
     return (f"CORRECT, BUT TOO MUCH HBM TRAFFIC FOR THIS LEVEL: moving {waste:.2f}x the byte floor, "
             f"and level {level_n} requires {bar:.2f}x or better. Correctness alone is level 4; this "
             f"level is about the bytes. {hint}")

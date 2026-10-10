@@ -17,6 +17,7 @@ The instructions are upstream's wording unless a comment says otherwise; moving 
 change what the model is told.
 """
 
+import ast
 import re
 
 
@@ -209,6 +210,186 @@ def nonfinite_hint(code):
             "nisa.tensor_reduce(dst=mx, data=scores, op=nl.maximum, axis=(1,)) into a (rows, 1) tile "
             "and subtract it: nisa.tensor_scalar(dst=shifted, data=scores, op0=nl.subtract, "
             "operand0=mx). Then exp the shifted scores. The result is mathematically identical.")
+
+
+# v8 (C8), from two root-cause analyses of the E-logs (LOG 15:2x):
+#  * L6: after load-once, the level-6 traffic sentence ("block M and N ... reused across iterations")
+#    pulls the model to put the k loop OUTSIDE m and n, allocating a fresh PSUM tile per k: nothing
+#    accumulates. 26/38 failing L6 attempts; all 14 under v7. kloop_hint names it (levels 5-7).
+#  * L8: (a) one name for the PSUM tile and the SBUF tile (31/31 skeleton-arm attempts), after which
+#    v1's "allocate it in sbuf" made it transpose INTO sbuf -> an untranslated Vector-engine error;
+#    (b) without the skeleton, q/k/v used as matmul operands straight from HBM ("already transposed",
+#    which the API card says about levels 3-7 only). v8a/v8b cover 45/50 failing L8 attempts.
+V8 = False
+
+_KLOOP_TEXT = ("\n  CAUSE: the contraction loop over k is OUTSIDE the m and n loops, so a new PSUM tile "
+               "is allocated for every k and nothing accumulates across k; the copy-out then reads "
+               "whichever `acc` was allocated last. Reorder the compute loops to m, then n, then k "
+               "innermost: inside the n loop allocate ONE psum tile `acc`, then for k: "
+               "nisa.nc_matmul(dst=acc, stationary=a[k][m], moving=b[k][n]), then -- still inside the "
+               "n loop, after the k loop -- tensor_copy `acc` to SBUF and dma_copy it to "
+               "result[m0:m0 + m_sz, n0:n0 + n_sz]. Keep the loading loops and the a[k][m] / b[k][n] "
+               "lists unchanged.")
+
+
+def _kloop_outside(code):
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        return False
+
+    def walk(node, loops):
+        for ch in ast.iter_child_nodes(node):
+            st = loops + [ch] if isinstance(ch, ast.For) else loops
+            if isinstance(ch, ast.Call) and ast.unparse(ch.func).endswith("nc_matmul"):
+                s = next((k.value for k in ch.keywords if k.arg == "stationary"), None)
+                while isinstance(s, ast.Subscript) and isinstance(s.value, ast.Subscript):
+                    s = s.value
+                kv = s.slice.id if isinstance(s, ast.Subscript) and isinstance(s.slice, ast.Name) else None
+                names = [l.target.id for l in loops if isinstance(l.target, ast.Name)]
+                if kv in names:
+                    kl = loops[names.index(kv)]
+                    psum_in_k = any(isinstance(c, ast.Call) and ast.unparse(c.func).endswith("ndarray")
+                                    and "psum" in ast.unparse(c) for c in ast.walk(kl))
+                    if psum_in_k or names.index(kv) != len(names) - 1:
+                        return True
+            if walk(ch, st):
+                return True
+        return False
+    return walk(tree, [])
+
+
+def kloop_hint(code, level):
+    if not V8 or not (5 <= level <= 7):
+        return ""
+    return _KLOOP_TEXT if _kloop_outside(code) else ""
+
+
+def _kw(call, name):
+    for k in call.keywords:
+        if k.arg == name and isinstance(k.value, ast.Name):
+            return k.value.id
+    return None
+
+def _fn(call):
+    f = call.func
+    return f.attr if isinstance(f, ast.Attribute) else None
+
+def scan(code):
+    """Walk statements in order; buffers[name] = last buffer allocated for that name."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+    fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)), None)
+    params = {a.arg for a in fn.args.args} if fn else set()
+    buf, events = {}, []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) \
+                and _fn(node.value) == "ndarray":
+            for k in node.value.keywords:
+                if k.arg == "buffer" and isinstance(k.value, ast.Attribute):
+                    for t in node.targets:
+                        if isinstance(t, ast.Name):
+                            events.append((node.lineno, "alloc", t.id, k.value.attr))
+        if isinstance(node, ast.Call) and _fn(node) in ("nc_matmul", "nc_transpose", "tensor_copy"):
+            events.append((node.lineno, _fn(node), node, None))
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Subscript) \
+                and isinstance(node.value, ast.Subscript) and isinstance(node.value.value, ast.Name) \
+                and node.value.value.id in params:
+            events.append((node.lineno, "elementwise", node.value.value.id, None))
+    events.sort(key=lambda e: e[0])
+    return params, events
+
+# ---- v8a: a PSUM tile is used as the SBUF tile too (one name for both) -------------------
+def v8a_offenders(code):
+    s = scan(code)
+    if not s:
+        return []
+    params, events = s
+    buf, tdst, bad = {}, set(), []
+    for ln, kind, a, b in events:
+        if kind == "alloc":
+            buf[a] = b
+        elif kind == "nc_transpose":
+            d = _kw(a, "dst")
+            if d and buf.get(d) == "sbuf":
+                bad.append(("transpose_into_sbuf", d))
+            tdst.add(d)
+        elif kind == "nc_matmul":
+            for role in ("stationary", "moving"):
+                n = _kw(a, role)
+                if n and buf.get(n) == "psum":
+                    bad.append(("psum_operand", n))
+        elif kind == "tensor_copy":
+            d, s_ = _kw(a, "dst"), _kw(a, "src")
+            if d and d == s_:
+                bad.append(("self_copy", d))
+    return bad
+
+V8A_ERR = re.compile(r"(stationary|moving) must be in \['sbuf'\], got psum|"
+                     r"Vector engine transpose requires shape")
+
+def v8a(feedback, code):
+    if not V8:
+        return ""
+    if not V8A_ERR.search(feedback or ""):
+        return ""
+    bad = v8a_offenders(code)
+    if not bad:
+        return ""
+    x = bad[0][1]
+    return (f"\n  CAUSE: `{x}` is used as BOTH the PSUM tile and the SBUF tile. These must be TWO "
+            f"tiles with two names. nisa.nc_transpose and nisa.nc_matmul write ONLY into a PSUM "
+            f"tile, and nc_matmul reads its stationary and moving ONLY from SBUF tiles. So: allocate "
+            f"`{x}_p` with buffer=nl.psum and pass it as dst=; allocate a separate `{x}` of the "
+            f"same shape with buffer=nl.sbuf; nisa.tensor_copy(dst={x}, src={x}_p); then use "
+            f"`{x}` as the matmul operand. Do the same for every transpose and matmul result "
+            f"(never tensor_copy a tile onto itself, never reuse q_t/k_t/v_t as a destination).")
+
+# ---- v8b: an HBM input goes straight into nc_matmul, or is transposed element by element --
+V8B_ERR = re.compile(r"(stationary|moving) must be in \['sbuf'\], got (private_hbm|shared_hbm)|"
+                     r"Out-of-bound access for tensor")
+
+def v8b_offenders(code):
+    s = scan(code)
+    if not s:
+        return []
+    params, events = s
+    bad = []
+    for ln, kind, a, b in events:
+        if kind == "nc_matmul":
+            for role in ("stationary", "moving"):
+                n = _kw(a, role)
+                if n in params:
+                    bad.append(("hbm_operand", n))
+        if kind == "elementwise":
+            bad.append(("elementwise_copy", a))
+    has_transpose = any(k == "nc_transpose" for _, k, _, _ in events)
+    return bad if (bad and not has_transpose) else []
+
+def v8b(feedback, code):
+    if not V8:
+        return ""
+    if not V8B_ERR.search(feedback or ""):
+        return ""
+    bad = v8b_offenders(code)
+    if not bad:
+        return ""
+    return ("\n  CAUSE: q, k and v are [seq, dim] tensors in HBM and none of them arrives transposed "
+            "(the 'already transposed' note applies only to the matmul levels). nc_matmul contracts "
+            "over the PARTITION axis, so q.kT needs dim on the partition axis of both operands. "
+            "dma_copy q and k whole into (S, D) SBUF tiles, then for each: nisa.nc_transpose("
+            "dst=<(D, S) psum tile>, data=<the (S, D) sbuf tile>) and nisa.tensor_copy into a new "
+            "(D, S) SBUF tile; pass those as stationary and moving. Never pass q, k or v to nc_matmul "
+            "and never copy tiles element by element in a Python loop.")
+
+
+
+def l8_hint(feedback, code, level):
+    if level != 8:
+        return ""
+    return v8a(feedback, code) or v8b(feedback, code)
 
 
 _PARTITION_COLLAPSED = re.compile(r"Partition dim size must be preserved, got (\d+) -> (\d+)")
@@ -436,6 +617,12 @@ def classify(feedback):
             return bucket
     if "must be reduced into a TILE, not a scalar" in fb:
         return "scalar_window_reduce"
+    if "the contraction loop over k is OUTSIDE" in fb:
+        return "kloop_outside"
+    if "is used as BOTH the PSUM tile and the SBUF tile" in fb:
+        return "psum_sbuf_conflated"
+    if "none of them arrives transposed" in fb:
+        return "assumed_pretransposed"
     if "is never copied into SBUF" in fb:
         return "tiles_never_loaded"
     if "exp() overflowed" in fb:

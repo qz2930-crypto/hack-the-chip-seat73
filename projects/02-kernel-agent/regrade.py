@@ -31,6 +31,7 @@ def main(paths):
     verdicts.V7 = "--v7" in sys.argv
     verdicts.V8 = "--v8" in sys.argv
     verdicts.V9 = "--v9" in sys.argv
+    verdicts.V10 = "--v10" in sys.argv
     nkibench.DIRECTIONAL = "--directional" in sys.argv
     nkibench.DEVICE_RULES = "--device-rules" in sys.argv
     nkibench.PROMPT_FIXES = "--prompt-fixes" in sys.argv

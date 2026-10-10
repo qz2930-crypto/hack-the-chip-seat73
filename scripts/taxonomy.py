@@ -57,6 +57,8 @@ DEFS = {
                              "nc_matmul for data movement"),
     "rule_device_comprehension": ("comprehension in the kernel: passes the simulator, rejected by the "
                                   "device compiler", "for loop + .append (--device-rules)"),
+    "softmax_ops": ("[L8] softmax built from nl.sum / negation instead of maximum, subtract, reciprocal",
+                    "name the exact op sequence (--v10)"),
     "api_misuse_lint": ("nisa/nl calls with wrong/missing keywords or swapped tensor_scalar roles "
                         "(caught statically, all at once)", "fix every listed call (--v9)"),
     "missing_positional": ("a required argument is missing", "pass every argument by keyword (--v9)"),

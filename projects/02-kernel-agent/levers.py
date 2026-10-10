@@ -95,6 +95,11 @@ def nki_attention_(q, k, v):
 '''
 
 
+V10 = False
+_SK_SOFTMAX_V10 = ("    # TODO: softmax into p (S, S), in this order: nisa.tensor_reduce op=nl.maximum -> mx (S,1);\n"
+                   "    #       nisa.tensor_scalar op0=nl.subtract, operand0=mx; nisa.activation op=nl.exp;\n"
+                   "    #       nisa.tensor_reduce op=nl.add -> sm (S,1); nisa.reciprocal(sm) -> rs (S,1);\n"
+                   "    #       nisa.tensor_scalar op0=nl.multiply, operand0=rs. (S,1) tiles go in operand0=.\n")
 PROMPT_FIXES = False
 _SK_ATTN_FIX = ("    # TODO: qT (D, S) in SBUF: nisa.nc_transpose(dst=qT_p, data=q_t) into its OWN psum tile qT_p,\n"
                 "    #       then nisa.tensor_copy(dst=qT, src=qT_p) into a SEPARATE sbuf tile qT; same for kT\n"
@@ -111,6 +116,9 @@ def skeleton(level):
         body = _SK_MATMUL.format(entry=entry)
     elif level == 8:
         body = _SK_ATTN
+        if V10:
+            body = re.sub(r"    # TODO: softmax over the last axis of scores.*?\n.*?\n", _SK_SOFTMAX_V10, body,
+                          count=1, flags=re.S)
         if PROMPT_FIXES:
             body = re.sub(r"    # TODO: qT and kT of shape \(D, S\) in SBUF.*?\n.*?\n", _SK_ATTN_FIX, body,
                           count=1, flags=re.S)

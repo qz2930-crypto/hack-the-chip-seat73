@@ -144,6 +144,7 @@ def grade(source, level):
             msg = enrich(f"raised {type(e).__name__}: {e}", source, level)
             msg += verdicts.l8_hint(msg, source, level)   # '' unless --v8-verdicts finds a cause
             msg += verdicts.mm_hint(msg, source, level)   # '' unless --v9-verdicts finds a cause
+            msg += verdicts.softmax_hint(source, level)   # '' unless --v10-verdicts
             failures.append((nkibench.label(case, level), msg))
             continue
         parts["runs"] = True
@@ -152,6 +153,7 @@ def grade(source, level):
              or nkibench.check_traffic_bar(level, counted, args, want))
         if m and m.startswith("NUMERICAL MISMATCH"):
             m += verdicts.code_hint(source, level)       # '' unless --v2-verdicts finds a cause
+            m += verdicts.softmax_hint(source, level)    # '' unless --v10-verdicts
         if m and m.startswith("NON-FINITE OUTPUT"):
             m += verdicts.nonfinite_hint(source)          # '' unless --v6-verdicts finds a cause
             m += verdicts.unloaded_hint(source, level)    # '' unless --v7-verdicts finds a cause
@@ -390,6 +392,14 @@ def offline_answers(level, n, rnd):
 def build_first(a, level, terse):
     """The first prompt, and the parts inserted into it (for token accounting)."""
     prompt = first_prompt(level, terse)
+    if a.v10_verdicts and level == 8:
+        # the API card's only reduction is "nl.sum(view, axis=...)"; all 115 L8 attempts then wrote
+        # tensor_reduce(op=nl.sum) and none used reciprocal/maximum (LOG 16:4x)
+        prompt = prompt.replace(
+            "  nl.sum(view, axis=[i, j])                 reduce; axis is a list\n",
+            "  nisa.tensor_reduce(dst=, op=nl.add|nl.maximum, data=, axis=(1,))   row sum / row max into (P,1)\n"
+            "  nisa.reciprocal(dst=, data=)              1/x\n"
+            "  nisa.activation(dst=, op=nl.exp, data=)   exp\n")
     if a.prompt_fixes and level == 8:
         # the API card's matmul paragraph says "The left operand arrives already transposed"; true
         # for levels 3-7 only -- at L8 the model took it to mean k needs no transpose (LOG 15:2x).
@@ -608,6 +618,9 @@ def main():
     ap.add_argument("--v9-verdicts", action="store_true",
                     help="report every nisa/nl signature misuse at once (static lint), translate missing "
                          "positional / undefined / used-before-assigned, L8 scores-matmul hint")
+    ap.add_argument("--v10-verdicts", action="store_true",
+                    help="L8: API card names tensor_reduce/reciprocal/exp; lint catches op=nl.sum / nisa.* ops "
+                         "/ inline data=; softmax op-sequence hint; skeleton TODO lists the op order")
     ap.add_argument("--directional", action="store_true",
                     help="numerical feedback names the direction of the error, never the target "
                          "value (nkibench.DIRECTIONAL)")
@@ -624,6 +637,8 @@ def main():
     verdicts.V7 = a.v7_verdicts
     verdicts.V8 = a.v8_verdicts
     verdicts.V9 = a.v9_verdicts
+    verdicts.V10 = a.v10_verdicts
+    levers.V10 = a.v10_verdicts
     nkibench.DEVICE_RULES = a.device_rules
     nkibench.PROMPT_FIXES = levers.PROMPT_FIXES = a.prompt_fixes
 

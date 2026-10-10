@@ -452,11 +452,38 @@ def signature_lint(code):
             if "operand0" in kw and isop(kw["operand0"]):
                 out.append((c.lineno, f"line {c.lineno}: tensor_scalar(operand0=...) is the number or "
                                       f"(P, 1) tile; the nl operation goes in op0="))
-        if c.func.attr == "activation":
-            kw = {k.arg for k in c.keywords}
-            if "src" in kw and "data" not in kw:
-                pass                       # already reported as a bad kwarg above
+        if V10:
+            kw = {k.arg: k.value for k in c.keywords}
+            FIX = {"sum": "nl.add", "max": "nl.maximum"}
+            for r in ("op", "op0", "op1"):
+                v = kw.get(r)
+                if isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and \
+                        (v.value.id == "nisa" or (c.func.attr == "tensor_reduce" and v.attr in FIX)):
+                    good = FIX.get(v.attr, f"nl.{v.attr}")
+                    out.append((c.lineno, f"line {c.lineno}: write {r}={good}; operations come from nl, "
+                                          f"and a row sum is nl.add, a row max nl.maximum"))
+            if c.func.attr == "tensor_scalar" and "data" in kw and not isinstance(kw["data"], ast.Name) \
+                    and not isinstance(kw["data"], ast.Subscript):
+                d = ast.unparse(kw["dst"]) if "dst" in kw else "the tile"
+                out.append((c.lineno, f"line {c.lineno}: tensor_scalar data= must be the NAME of an existing "
+                                      f"tile (normally data={d}); never build a tile inline"))
     return out
+
+
+V10 = False
+
+
+def softmax_hint(code, level):
+    """L8: no attempt of 115 ever used reciprocal or nl.maximum (LOG 16:4x): the API card offers only
+    nl.sum. Name the exact op sequence once the code reaches the softmax."""
+    if not V10 or level != 8 or "tensor_reduce" not in (code or ""):
+        return ""
+    if "reciprocal(" in code and "nl.maximum" in code and "nl.subtract" in code:
+        return ""
+    return ("\n  CAUSE: the softmax must be exactly: tensor_reduce op=nl.maximum -> (S,1) mx; tensor_scalar "
+            "op0=nl.subtract operand0=mx; activation op=nl.exp; tensor_reduce op=nl.add -> (S,1) sm; "
+            "nisa.reciprocal(dst=rs, data=sm); tensor_scalar op0=nl.multiply operand0=rs. Every (S,1) "
+            "tile goes in operand0=, never data=. Do not negate or add the sum.")
 
 
 def _i_missing(m, t):

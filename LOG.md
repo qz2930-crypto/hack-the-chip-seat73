@@ -168,3 +168,11 @@ Every decision, run and dead end, written as it happens.
 - **16:17** **Stage A v4 complete (n=2 each)**: A1, A2, A6, A7, **A8 (first solve, round 5)**, A9, A10 solved; **A3 0.88 and A4 0.95 regressed** against v3's 5/5; A5 0.62. v4 bundled two changes, so they are split: `--v4-rules` (the softmax whole-row and mean/variance-overwrite rules only, no accumulator renaming) is queued as **A5_qwen** over all 10 levels × 2 on seats 72/73. C10 so far: L1–L4 5/5, L6 2/2, L5 1/5 (others running), L8 0/5 (running to 12 rounds).
 - **16:37** **C10 = FINAL AGENT [sim, n=5/level]: L1–L7 all 5/5, L8 0/5** (0.30 after 6–12 rounds). Stage A: v4 8/10 (A8 solved, A3/A4 lost); v4-rules 8/10 (= v3; A8's solve needs the renaming). **`--v4-smart`** renames only when the kernel has ≥2 reductions (A3/A4 have 1, A8 has 4, A5 has 2), aiming at 9/10. Queued as A6_qwen × 10 levels × 2 on seats 72/73. A third L8 analysis (C10 logs) is running. **Data cut-off 18:00.** Docs are written in parallel.
 - **16:38** C10 regrade: the first pass showed 5 mismatches because regrade.py did not set DEVICE_RULES/PROMPT_FIXES (both change feedback wording). With them added: **0/37 mismatches.** C10 is clean.
+- **16:41** **Third L8 analysis (C10 logs, subagent) → the same pattern as L6: upstream's own prompt.** The API card's only reduction is `nl.sum(view, axis=…)`; in **all 115 L8 attempts** the model wrote `tensor_reduce(op=nl.sum)` ("Unknown reduction operator"), and **none** used reciprocal or nl.maximum. Runs got past v9's lint in 1–2 rounds and past the scores matmul. The furthest (c10_L8_r1) ran everything up to the softmax sum.
+- **16:41** **`--v10-verdicts` (L8):**
+  - at L8 only, the API card's nl.sum line becomes tensor_reduce(op=nl.add|nl.maximum) / reciprocal / activation exp;
+  - the skeleton's softmax TODO lists the op order (words, no code);
+  - the lint also flags op=nl.sum/max in tensor_reduce, nisa.* used as an op, and an inline data= in tensor_scalar;
+  - a softmax op-sequence hint.
+  - **Verified in the pod: 0 lint FPs on correct kernels; the L8 prompt changes and the L1 prompt is untouched; it fires on 22/22 of C10's L8 attempts.**
+  - **C11 = C10 + v10 on ALL levels L1–L8 × 5** (L8 12 rounds), across 5 seats, so the final row is one configuration. Data cut-off 18:00.

@@ -144,6 +144,7 @@ def grade(source, level):
             m += verdicts.code_hint(source, level)       # '' unless --v2-verdicts finds a cause
         if m and m.startswith("NON-FINITE OUTPUT"):
             m += verdicts.nonfinite_hint(source)          # '' unless --v6-verdicts finds a cause
+            m += verdicts.unloaded_hint(source, level)    # '' unless --v7-verdicts finds a cause
         if m and m.startswith("CORRECT, BUT TOO MUCH HBM TRAFFIC"):
             m += verdicts.traffic_hint(source, level)    # '' unless --v4-verdicts finds a cause
         # A simulator warning about a hardware-correctness hazard counts as a failure even when the
@@ -573,6 +574,8 @@ def main():
                     help="levels 5-7 traffic instruction: load every operand tile exactly once")
     ap.add_argument("--v6-verdicts", action="store_true",
                     help="NaN from exp without max-subtraction is an overflow, say so")
+    ap.add_argument("--v7-verdicts", action="store_true",
+                    help="NaN because lhsT/rhs tiles were allocated but never dma_copy'd: say which")
     ap.add_argument("--directional", action="store_true",
                     help="numerical feedback names the direction of the error, never the target "
                          "value (nkibench.DIRECTIONAL)")
@@ -586,6 +589,7 @@ def main():
     verdicts.V4 = a.v4_verdicts
     verdicts.V5 = a.v5_verdicts
     verdicts.V6 = a.v6_verdicts
+    verdicts.V7 = a.v7_verdicts
 
     if not a.offline:
         # Validate before the first request. An empty or scheme-less value produces a hostname

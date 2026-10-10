@@ -179,6 +179,28 @@ def traffic_hint(code, level):
 V6 = False
 
 
+# v7 (C7): measured in c5_L6_r0. After the load-once instruction the model built the a[k][m] /
+# b[k][n] lists of ALLOCATED tiles but never dma_copy'd lhsT/rhs into them, then repeated the same
+# kernel: the v1 verdict ("usually an uninitialised tile") is true but names neither the tile nor
+# the missing call.
+V7 = False
+
+
+def unloaded_hint(code, level):
+    if not V7 or not (3 <= level <= 7):
+        return ""
+    missing = [n for n in ("lhsT", "rhs")
+               if not re.search(rf"dma_copy\([^)]*src\s*=\s*{n}\s*\[", code or "", re.S)]
+    if not missing:
+        return ""
+    names = " and ".join(f"`{n}`" for n in missing)
+    return (f"\n  CAUSE: {names} is never copied into SBUF: the tiles are allocated with nl.ndarray "
+            f"but nothing writes them, so nc_matmul reads garbage. Right after allocating each "
+            f"tile, fill it: nisa.dma_copy(dst=tile, src=lhsT[k0:k0 + k_sz, m0:m0 + m_sz]) for "
+            f"lhsT tiles and nisa.dma_copy(dst=tile, src=rhs[k0:k0 + k_sz, n0:n0 + n_sz]) for rhs "
+            f"tiles. Build both lists with the k index first: a[k][m] and b[k][n].")
+
+
 def nonfinite_hint(code):
     if not V6 or "exp" not in (code or "") or (re.search(r"nl.maximum", code or "")
                                                 and re.search(r"nl.subtract", code or "")):
@@ -414,6 +436,8 @@ def classify(feedback):
             return bucket
     if "must be reduced into a TILE, not a scalar" in fb:
         return "scalar_window_reduce"
+    if "is never copied into SBUF" in fb:
+        return "tiles_never_loaded"
     if "exp() overflowed" in fb:
         return "exp_overflow"
     if "Load every operand tile exactly ONCE" in fb:

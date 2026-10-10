@@ -141,6 +141,16 @@ def _i_buffer(m, t):
             f"nl.sbuf. Copy between them with nisa.tensor_copy.")
 
 
+def _i_contraction_mismatch(m, t):
+    # ADDED on seat 73: the baseline's level-2 (transpose) runs reached for nc_matmul and hit this
+    # with no translation at all -- the API card's matmul paragraph pulls non-matmul levels to it.
+    s, mv = int(m.group(1)), int(m.group(2))
+    return (f" nc_matmul contracts over the PARTITION (first) dimension, so stationary and moving "
+            f"must have the same first dimension; you passed {s} and {mv}. If this operation is not "
+            f"a matrix multiply, do not use nc_matmul at all: move data with nisa.dma_copy or "
+            f"nisa.tensor_copy between slices instead.")
+
+
 def _i_multi(m, t):
     return (" Pass every argument by keyword, e.g. nisa.nc_matmul(dst=..., stationary=..., "
             "moving=...), so none is bound twice.")
@@ -184,6 +194,8 @@ RULES = [
     ("engine_cannot_reach_hbm", r"(\w+) (?:dst|src)? ?must be in \['sbuf', 'psum'\], got shared_hbm",
      _i_hbm_engine),
     ("wrong_buffer", r"(\w+) must be in \['(\w+)'\], got (\w+)", _i_buffer),
+    ("contraction_mismatch", r"Matmul contraction dimension mismatch: stationary\[0\]=(\d+) != "
+                             r"moving\[0\]=(\d+)", _i_contraction_mismatch),
     ("arg_bound_twice", r"got multiple values for argument", _i_multi),
     ("tile_1d", r"must have at least 2 dimensions", _i_1d),
     ("reshape_instead_of_slice", r"cannot reshape array of size", _i_reshape),
@@ -271,6 +283,8 @@ _CASES = [
     ("ValueError: cannot reshape array of size 32768 into shape (1,64)", "reshape_instead_of_slice"),
     ("AttributeError: module 'nki.language' has no attribute 'dot'", "invented_api"),
     ("AttributeError: 'NkiTensor' object has no attribute 'mean'", "numpy_method_on_tile"),
+    ("AssertionError: Matmul contraction dimension mismatch: stationary[0]=3 != moving[0]=4",
+     "contraction_mismatch"),
     ("ZeroDivisionError: division by zero", "raised_other"),
 ]
 _FEEDBACK = [

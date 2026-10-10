@@ -14,11 +14,11 @@ T=$(scripts/now | tr -d :)
 snap="runs/${T}_${label}"
 mkdir -p "$snap"
 cp runs/live/*.jsonl runs/live/*.log "$snap"/ 2>/dev/null || true
-ALL="runs/[0-9]*/*.jsonl"
-python scripts/taxonomy.py $ALL > FAILURES.md
-python scripts/token_report.py $ALL > TOKENS.md
+ALL="runs/live/*.jsonl"   # the complete mirror of all five seats; runs/<HHMM>_<label>/ is the committed archive
+python scripts/taxonomy.py "$ALL" > FAILURES.md
+python scripts/token_report.py "$ALL" > TOKENS.md
 python scripts/attempt_log.py "$ALL" >/dev/null
-python scripts/results.py $ALL > RESULTS_AUTO.md
+python scripts/results.py "$ALL" > RESULTS_AUTO.md
 { echo "# RESULTS_AUTO — every experiment's per-level rate, regenerated from all logs ($(scripts/now) ET)"; echo;
   echo '```'; cat RESULTS_AUTO.md; echo '```'; } > RESULTS_AUTO.tmp && mv RESULTS_AUTO.tmp RESULTS_AUTO.md
 echo "- **$(scripts/now)** refresh_deliverables ($label): snapshot \`$snap/\`; regenerated FAILURES.md, TOKENS.md, ATTEMPTS.md, attempts_all.csv, RESULTS_AUTO.md." >> LOG.md

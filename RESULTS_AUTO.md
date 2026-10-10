@@ -1,4 +1,4 @@
-# RESULTS_AUTO — every experiment's per-level rate, regenerated from all logs (16:49 ET)
+# RESULTS_AUTO — every experiment's per-level rate, regenerated from all logs (17:07 ET)
 
 ```
 
@@ -61,11 +61,11 @@
   L4: solved 2/2, mean 1.00, all=[1.0, 1.0]   rounds-to-solve=[3, 3]   rounds used=[3, 3]
   L5: solved 0/2, mean 0.62, all=[0.62, 0.62]   rounds-to-solve=-   rounds used=[6, 6]
   L6: solved 2/2, mean 1.00, all=[1.0, 1.0]   rounds-to-solve=[2, 2]   rounds used=[2, 2]
-  L7: solved 1/2, mean 0.95, all=[1.0, 0.9]   rounds-to-solve=[6]   rounds used=[6, 4]
+  L7: solved 2/2, mean 1.00, all=[1.0, 1.0]   rounds-to-solve=[6, 6]   rounds used=[6, 6]
   L8: solved 2/2, mean 1.00, all=[1.0, 1.0]   rounds-to-solve=[3, 5]   rounds used=[3, 5]
   L9: solved 2/2, mean 1.00, all=[1.0, 1.0]   rounds-to-solve=[2, 2]   rounds used=[2, 2]
   L10: solved 2/2, mean 1.00, all=[1.0, 1.0]   rounds-to-solve=[2, 2]   rounds used=[2, 2]
-  row: | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 0/2, mean 0.62, all=[0.62, 0.62] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 1/2, mean 0.95, all=[1.0, 0.9] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] |
+  row: | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 0/2, mean 0.62, all=[0.62, 0.62] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] | solved 2/2, mean 1.00, all=[1.0, 1.0] |
 
 == A_qwen
   L1: solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0]   rounds-to-solve=[1, 1, 1, 1, 1]   rounds used=[1, 1, 1, 1, 1]
@@ -110,14 +110,15 @@
   row: | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 0/5, mean 0.30, all=[0.3, 0.3, 0.3, 0.3, 0.3] |
 
 == c11
-  L1: solved 2/4, mean 0.65, all=[1.0, 1.0, 0.3, 0.3]   rounds-to-solve=[2, 2]   rounds used=[2, 2, 1, 1]
-  L2: solved 3/3, mean 1.00, all=[1.0, 1.0, 1.0]   rounds-to-solve=[1, 1, 1]   rounds used=[1, 1, 1]
-  L3: solved 0/1, mean 0.30, all=[0.3]   rounds-to-solve=-   rounds used=[1]
-  L5: solved 0/5, mean 0.88, all=[0.88, 0.88, 0.88, 0.88, 0.88]   rounds-to-solve=-   rounds used=[3, 3, 3, 3, 3]
-  L6: solved 1/3, mean 0.83, all=[0.75, 0.75, 1.0]   rounds-to-solve=[3]   rounds used=[3, 3, 3]
-  L7: solved 1/1, mean 1.00, all=[1.0]   rounds-to-solve=[3]   rounds used=[3]
-  L8: solved 0/5, mean 0.30, all=[0.3, 0.3, 0.3, 0.3, 0.3]   rounds-to-solve=-   rounds used=[2, 2, 2, 2, 1]
-  row: | solved 2/4, mean 0.65, all=[1.0, 1.0, 0.3, 0.3] | solved 3/3, mean 1.00, all=[1.0, 1.0, 1.0] | solved 0/1, mean 0.30, all=[0.3] | solved 0/5, mean 0.88, all=[0.88, 0.88, 0.88, 0.88, 0.88] | solved 1/3, mean 0.83, all=[0.75, 0.75, 1.0] | solved 1/1, mean 1.00, all=[1.0] | solved 0/5, mean 0.30, all=[0.3, 0.3, 0.3, 0.3, 0.3] |
+  L1: solved 2/5, mean 0.62, all=[1.0, 1.0, 0.5, 0.3, 0.3]   rounds-to-solve=[2, 2]   rounds used=[2, 2, 8, 7, 5]
+  L2: solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0]   rounds-to-solve=[1, 1, 1, 1, 1]   rounds used=[1, 1, 1, 1, 1]
+  L3: solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0]   rounds-to-solve=[2, 2, 2, 2, 2]   rounds used=[2, 2, 2, 2, 2]
+  L4: solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0]   rounds-to-solve=[2, 2, 2, 2, 2]   rounds used=[2, 2, 2, 2, 2]
+  L5: solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0]   rounds-to-solve=[4, 4, 4, 4, 4]   rounds used=[4, 4, 4, 4, 4]
+  L6: solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0]   rounds-to-solve=[4, 4, 4, 4, 3]   rounds used=[4, 4, 4, 4, 3]
+  L7: solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0]   rounds-to-solve=[3, 3, 3, 3, 3]   rounds used=[3, 3, 3, 3, 3]
+  L8: solved 0/5, mean 0.30, all=[0.3, 0.3, 0.3, 0.3, 0.3]   rounds-to-solve=-   rounds used=[7, 7, 8, 8, 8]
+  row: | solved 2/5, mean 0.62, all=[1.0, 1.0, 0.5, 0.3, 0.3] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 0/5, mean 0.30, all=[0.3, 0.3, 0.3, 0.3, 0.3] |
 
 == c2
   L1: solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0]   rounds-to-solve=[2, 2, 2, 2, 2]   rounds used=[2, 2, 2, 2, 2]

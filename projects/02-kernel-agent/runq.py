@@ -26,7 +26,8 @@ os.makedirs("runs", exist_ok=True)
 
 def running():
     # ^python: count the interpreter only, not the "sh -c" wrapper that Popen(shell=True) adds
-    out = subprocess.run(["pgrep", "-f", "^python -u agent[.]py"], capture_output=True, text=True)
+    out = subprocess.run(["pgrep", "-f", "^python -u (agent|stagea)[.]py"], capture_output=True,
+                         text=True)
     return len([l for l in out.stdout.split() if l.strip()])
 
 
@@ -50,7 +51,11 @@ while True:
     pending = [j for j in jobs() if j[0] not in started()]
     if pending and running() < MAX:
         tag, args = pending[0][0], (pending[0][1] if len(pending[0]) > 1 else "")
-        cmd = (f"python -u agent.py --tag {tag} --log runs/{tag}.jsonl {args} "
+        # "STAGEA <args>" runs the Stage-A (numpy/kernelbench) agent against the local server
+        prog = "agent.py"
+        if args.startswith("STAGEA"):
+            prog, args = "stagea.py", args[len("STAGEA"):].strip()
+        cmd = (f"python -u {prog} --tag {tag} --log runs/{tag}.jsonl {args} "
                f"> runs/{tag}.log 2>&1 < /dev/null")
         subprocess.Popen(cmd, shell=True, start_new_session=True)
         with open("runs/started.txt", "a") as f:

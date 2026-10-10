@@ -278,8 +278,257 @@ def check_rules(src, n):
 
 # ---------------------------------------------------------------- verification
 
-def describe_mismatch(got, want, tol):
-    """The message your agent has to learn from. Vague here means slow there."""
+EPS32 = float(np.finfo(np.float32).eps)      # 2**-23 ~= 1.19e-7, unit roundoff is eps/2
+TOL_SAFETY = 8.0                             # c in rtol = c * sqrt(n_acc) * eps32
+RTOL_FLOOR = 1e-5                            # never stricter than this
+RAGGED_CONC = 0.90       # >= this share of wrong elements in the partial tile -> ragged edge
+RAGGED_INTERIOR = 0.01   # ... and at most this share of the full-tile interior is wrong
+
+
+def tolerance(want, n_acc=1, rtol=None):
+    """Return (rtol, atol) for comparing a float32 kernel to a float64-accurate reference.
+
+    Criterion, per element:  |got - want| <= atol + rtol * |want|
+
+    Which eps. The kernels compute in float32, so the reference (float64, or float32 rounded
+    from float64) is effectively exact and the only legitimate discrepancy is float32
+    rounding. eps32 = np.finfo(np.float32).eps = 2**-23 ~= 1.19e-7 (unit roundoff eps32/2).
+    A single elementwise op is off by <= eps32/2 relative; a handful of fused elementwise ops
+    by a few eps32.
+
+    Why sqrt(n). A length-n float32 reduction (sum, dot product, mean, variance) has a
+    worst-case error bound of ~n*eps32*sum|x_i| (Higham, recursive summation), but rounding
+    errors are close to independent and zero-mean, so the error that actually occurs grows
+    like a random walk, ~sqrt(n)*eps32. The worst-case n*eps32 bound would make rtol ~6e-5
+    at n=513, loose enough to accept wrong-but-close kernels, so we budget for the typical
+    sqrt(n) growth. The accumulation length n_acc is per level: 1 for elementwise and
+    transpose, the row length for sum/max/RMSNorm/softmax/layernorm, K for matmul,
+    d + window for attention, C_in*K for conv (see `level(...)`).
+
+    Why the safety factor c = 8. sqrt(n)*eps32 is a one-sigma figure; the max over up to
+    ~10^5 output elements sits several sigma out (~4.5 sigma for 1e5 Gaussian samples), and
+    the ops are not perfectly conditioned (layernorm amplifies the error in the mean by
+    |mean|/std, which the 'large' cases make ~10). 8 covers both. Measured: correct
+    float32 tiled kernels with sequential (worst-order) accumulation use at most about a
+    quarter of this budget on the ladder's cases. A floor of 1e-5 (= 84 eps32) keeps n_acc=1
+    levels from demanding bit-exactness from fused or reassociated arithmetic.
+
+    Why atol = rtol * RMS(want). A purely relative test divides by |want|, so an output
+    that should be ~0 (a layernorm value near the mean, a matmul entry that cancels, a
+    softmax tail below float32's normal range) is held to an absolute error of ~1e-4*|want|,
+    which float32 cannot deliver: those values come from subtracting O(scale) quantities,
+    so their absolute error is O(eps32*scale) regardless of how small the result is. The
+    honest yardstick for such an element is the magnitude of the output it belongs to, so
+    atol is rtol times the RMS of the reference output. An all-zero reference gets an atol
+    of ~1e-43, i.e. exact.
+
+    Strictness. The planted bugs in --selftest (a 1.0001 scale on the ragged tile, an
+    unwritten last column, skipped rows) are all still caught; see `selftest()`.
+
+    Pass `rtol` to override the derived rtol (the CLI's --tol); atol still scales with it.
+    """
+    if rtol is None:
+        rtol = max(TOL_SAFETY * np.sqrt(max(int(n_acc), 1)) * EPS32, RTOL_FLOOR)
+    w = np.asarray(want, dtype=np.float64)
+    w = w[np.isfinite(w)]
+    scale = float(np.sqrt(np.mean(w * w))) if w.size else 0.0
+    atol = float(rtol) * max(scale, float(np.finfo(np.float32).tiny))
+    return float(rtol), atol
+
+
+def _as_2d(a):
+    """Rows x cols view for localisation. A 1-D output (row sum, row max) is a column."""
+    if a.ndim == 0:
+        return a.reshape(1, 1)
+    if a.ndim == 1:
+        return a.reshape(-1, 1)
+    return a.reshape(a.shape[0], -1)
+
+
+def _stride_pattern(mask):
+    """If the True entries of a 1-D mask are (nearly) every k-th index, return (k, offset)."""
+    n = mask.size
+    nbad = int(mask.sum())
+    if nbad < 3 or nbad == n:
+        return None
+    idx = np.arange(n)
+    best = None
+    for k in range(2, n // 3 + 1):
+        for o in range(k):
+            pat = (idx % k) == o
+            if pat.sum() < 3:
+                continue
+            j = (pat & mask).sum() / (pat | mask).sum()
+            if best is None or j > best[0] + 1e-12:
+                best = (j, k, o)
+    if best and best[0] >= 0.9:
+        return best[1], best[2]
+    return None
+
+
+def _contiguous(mask):
+    i = np.flatnonzero(mask)
+    return i.size > 0 and i[-1] - i[0] + 1 == i.size, (int(i[0]), int(i[-1])) if i.size else None
+
+
+def _tile_lines(bad, orig_shape):
+    """TILE <class>: where the wrong elements sit relative to the full/partial tile grid."""
+    R, C = bad.shape
+    nbad = int(bad.sum())
+    axes = [("ROWS", "rows", R, TILE_ROWS, 0)]
+    if C > 1 or len(orig_shape) >= 2:
+        axes.append(("COLS", "columns", C, TILE_COLS, 1))
+    if all(N < T for _, _, N, T, _ in axes):
+        return [f"TILE SUB-TILE-SHAPE: output shape {orig_shape} is smaller than one "
+                f"{TILE_ROWS}x{TILE_COLS} tile, so every element is in the single partial tile "
+                f"and tile position says nothing here; the ragged-edge hint does NOT apply. "
+                f"Use the PATTERN line."]
+    claims, notes = [], []
+    for tag, word, N, T, ax in axes:
+        full = (N // T) * T
+        if N < T:
+            notes.append(f"{word}: {N} < {T}, no full tile to compare against")
+            continue
+        if full == N:
+            notes.append(f"{word}: {N} is a multiple of {T}, no partial tile")
+            continue
+        sl = [slice(None), slice(None)]
+        sl[ax] = slice(full, None)
+        in_part = int(bad[tuple(sl)].sum())
+        sl[ax] = slice(0, full)
+        interior = bad[tuple(sl)]
+        frac = in_part / nbad
+        irate = float(interior.mean())
+        if frac >= RAGGED_CONC and irate <= RAGGED_INTERIOR:
+            claims.append(
+                f"TILE RAGGED-EDGE-{tag}: {frac:.0%} of the wrong elements are in {word} >= "
+                f"{full} (the final partial {word[:-1]} tile, {N - full} of {N}) and only "
+                f"{irate:.1%} of the full-tile interior is wrong. The ragged edge is the likely "
+                f"cause: check the slice end and loop bound of the LAST {word[:-1]} tile "
+                f"(min({full}+{T}, {N}), not {full}+{T} or {N}-1).")
+        else:
+            notes.append(f"{frac:.0%} of the wrong elements are in the partial {word[:-1]} tile "
+                         f"({word} >= {full}); {irate:.1%} of the full-tile interior is wrong")
+    if claims:
+        return claims
+    return ["TILE NOT-EDGE: the errors are not concentrated in a partial tile ("
+            + "; ".join(notes) + "). The tile loop bounds are probably not the problem."]
+
+
+def _pattern_line(bad):
+    """PATTERN <class>: the spatial shape of the wrong elements."""
+    R, C = bad.shape
+    rows = bad.any(axis=1)
+    cols = bad.any(axis=0)
+    nr, nc = int(rows.sum()), int(cols.sum())
+    one_col = C == 1
+    rw = "elements" if one_col else "rows"
+    if R > 1 and nr == 1 and rows[0]:
+        return (f"PATTERN FIRST-ROW: only row 0 is wrong. The first iteration is special-cased "
+                f"or initialised differently (accumulator init, loop starting at 1).")
+    if R > 1 and nr == 1 and rows[-1]:
+        return (f"PATTERN LAST-ROW: only the last row ({R - 1}) is wrong. Off-by-one in the row "
+                f"loop bound or slice end (range(R-1), r0:R-1).")
+    if not one_col and nc == 1 and cols[0]:
+        return (f"PATTERN FIRST-COL: only column 0 is wrong. The first column/iteration of the "
+                f"inner loop is handled differently (accumulator init, loop starting at 1).")
+    if not one_col and nc == 1 and cols[-1]:
+        return (f"PATTERN LAST-COL: only the last column ({C - 1}) is wrong. Off-by-one in the "
+                f"column loop bound or slice end (range(C-1), c0:C-1).")
+    st = _stride_pattern(rows) if R > 1 else None
+    if st:
+        k, o = st
+        return (f"PATTERN STRIDE-ROWS: the wrong {rw} are one in every {k}, starting at {o} "
+                f"({nr} of {R}). A loop step bug: the row loop steps by {k} or a tile is "
+                f"indexed with a stride; every {rw[:-1]} must be visited exactly once.")
+    st = _stride_pattern(cols) if not one_col else None
+    if st:
+        k, o = st
+        return (f"PATTERN STRIDE-COLS: the wrong columns are one in every {k}, starting at {o} "
+                f"({nc} of {C}). A loop step bug in the column loop; every column must be "
+                f"visited exactly once.")
+    ok_r, span_r = _contiguous(rows)
+    if R > 1 and ok_r and nr < R:
+        return (f"PATTERN ROW-BLOCK: the wrong {rw} are one contiguous block, {span_r[0]}..{span_r[1]} "
+                f"of {R}; the rest is right. One tile or one loop range is wrong; find the "
+                f"iteration that covers {rw} {span_r[0]}..{span_r[1]}.")
+    ok_c, span_c = _contiguous(cols)
+    if not one_col and ok_c and nc < C:
+        return (f"PATTERN COL-BLOCK: the wrong columns are one contiguous block, "
+                f"{span_c[0]}..{span_c[1]} of {C}, across {nr} of {R} rows. One column tile or "
+                f"one loop range is wrong; find the iteration that covers columns "
+                f"{span_c[0]}..{span_c[1]}.")
+    if nr == R:
+        return (f"PATTERN ALL-ROWS: every {rw[:-1]} has wrong elements ({bad.mean():.1%} of all "
+                f"elements). This is the core arithmetic, not an edge or a loop bound.")
+    return (f"PATTERN SCATTERED: {nr} of {R} {rw} and {nc} of {C} columns have wrong elements "
+            f"with no block or stride structure. Suspect value-dependent arithmetic (overflow, "
+            f"cancellation, a wrong identity element) rather than indexing.")
+
+
+def _direction_line(G, W, bad, rtol, atol):
+    """DIRECTION <class>: how the wrong values are wrong."""
+    g, w = G[bad], W[bad]
+    n = g.size
+    if np.all(g == 0):
+        return (f"DIRECTION ZERO: all {n} wrong elements are exactly 0 where the reference is "
+                f"not. They were never written (a skipped iteration) or a partial result was "
+                f"never added back.")
+    # Shifted by one along an axis: got[i, j] == want[i, j-1] (or j+1, i-1, i+1).
+    for ax, word in ((1, "column"), (0, "row")):
+        if W.shape[ax] < 2:
+            continue
+        for s, side in ((1, "before"), (-1, "after")):
+            Ws = np.roll(W, s, axis=ax)
+            valid = np.ones_like(bad)
+            edge = [slice(None), slice(None)]
+            edge[ax] = 0 if s == 1 else -1
+            valid[tuple(edge)] = False
+            m = bad & valid
+            if m.sum() < 3:
+                continue
+            hit = np.abs(G[m] - Ws[m]) <= atol + rtol * np.abs(Ws[m])
+            if hit.mean() >= 0.9 and m.sum() >= 0.9 * n:
+                return (f"DIRECTION SHIFTED-{word.upper()}S: {hit.mean():.0%} of the wrong "
+                        f"elements hold the expected value of the {word} {side} them "
+                        f"(off by one {word}). An off-by-one in a {word} index or slice start.")
+    nz = np.abs(w) > 0
+    if nz.sum() >= max(1, 0.9 * n):
+        r = g[nz] / w[nz]
+        med = float(np.median(r))
+        if abs(med + 1) < 1e-2 and np.mean(np.abs(r + 1) < 1e-2) >= 0.9:
+            return (f"DIRECTION SIGN-FLIPPED: got ~= -expected on {np.mean(np.abs(r + 1) < 1e-2):.0%} "
+                    f"of the wrong elements. A subtraction is reversed or a negation is "
+                    f"missing/extra.")
+        if abs(med - 1) > 2 * rtol:
+            close = np.abs(r - med) <= 0.05 * abs(med - 1)
+            if close.mean() >= 0.9:
+                return (f"DIRECTION SCALED: got/expected ~= {med:.6g} on {close.mean():.0%} of "
+                        f"the wrong elements, a constant factor. A normalisation is wrong "
+                        f"(divide by the wrong count, a factor applied twice or not at all).")
+    hi = float(np.mean(g > w))
+    rel = (g - w) / np.maximum(np.abs(w), atol)
+    medrel = float(np.median(rel))
+    if hi >= 0.9:
+        return (f"DIRECTION TOO-LARGE: got > expected on {hi:.0%} of the wrong elements "
+                f"(median excess {medrel:+.3g} relative). Something is added or counted that "
+                f"should not be (double-counted tile, extra term, bad identity element).")
+    if hi <= 0.1:
+        return (f"DIRECTION TOO-SMALL: got < expected on {1 - hi:.0%} of the wrong elements "
+                f"(median shortfall {medrel:+.3g} relative). Something is missing (a tile or "
+                f"term not accumulated, a value clipped or truncated).")
+    return (f"DIRECTION MIXED: {hi:.0%} too large and {1 - hi:.0%} too small, not a constant "
+            f"bias. Suspect the wrong element being read, or precision loss "
+            f"(float16 accumulation, cancellation), not a missing term.")
+
+
+def describe_mismatch(got, want, tol=None, n_acc=1):
+    """The message your agent has to learn from. Vague here means slow there.
+
+    `tol` is None (derive rtol/atol from n_acc, see `tolerance`), a float (override rtol;
+    atol still scales with the output RMS), or an explicit (rtol, atol) pair.
+    Returns None when every element is within tolerance.
+    """
     got = np.asarray(got, dtype=np.float64)
     want = np.asarray(want, dtype=np.float64)
     if got.shape != want.shape:
@@ -292,39 +541,33 @@ def describe_mismatch(got, want, tol):
         return (f"NON-FINITE OUTPUT: {n_nan} NaN and {n_inf} Inf values, first at index "
                 f"{tuple(int(i) for i in where)}. Overflow in exp, or a division by a zero "
                 f"denominator. Subtract the max before exponentiating.")
-    denom = np.maximum(np.abs(want), 1e-30)
-    rel = np.abs(got - want) / denom
-    i = int(np.argmax(rel))
-    idx = np.unravel_index(i, got.shape)
-    worst = float(rel.flat[i])
-    if worst <= tol:
+    if isinstance(tol, tuple):
+        rtol, atol = float(tol[0]), float(tol[1])
+    else:
+        rtol, atol = tolerance(want, n_acc, rtol=tol)
+    err = np.abs(got - want)
+    allowed = atol + rtol * np.abs(want)
+    bad = err > allowed
+    if not bad.any():
         return None
-    frac = float((rel > tol).mean())
-    msg = [f"NUMERICAL MISMATCH: worst relative error {worst:.3g} at index "
-           f"{tuple(int(x) for x in idx)} (tolerance {tol:g}).",
+    over = err / allowed
+    i = int(np.argmax(over))
+    idx = tuple(int(x) for x in np.unravel_index(i, got.shape))
+    frac = float(bad.mean())
+    msg = [f"NUMERICAL MISMATCH: worst element at index {idx}: |got-want| = {err.flat[i]:.3g}, "
+           f"allowed {allowed.flat[i]:.3g} ({over.flat[i]:.3g}x over; rtol {rtol:.3g}, "
+           f"atol {atol:.3g}, n_acc {n_acc}).",
            f"  expected {want.flat[i]:+.6g}, got {got.flat[i]:+.6g}",
-           f"  {frac:.1%} of elements are outside tolerance"]
-    # Localise it, because "somewhere" is useless feedback.
-    if got.ndim >= 2:
-        r, c = int(idx[0]), int(idx[-1])
-        in_partial_row = r >= (got.shape[0] // TILE_ROWS) * TILE_ROWS
-        in_partial_col = c >= (got.shape[-1] // TILE_COLS) * TILE_COLS
-        if in_partial_row or in_partial_col:
-            which = " and ".join(x for x in
-                                 ["the final PARTIAL ROW tile" if in_partial_row else "",
-                                  "the final PARTIAL COLUMN tile" if in_partial_col else ""] if x)
-            msg.append(f"  this is in {which} (shape {got.shape}, tile "
-                       f"{TILE_ROWS}x{TILE_COLS}) — the ragged edge is the likely cause")
-        elif frac > 0.5:
-            msg.append("  most elements are wrong, so this is the core arithmetic, "
-                       "not an edge case")
-        else:
-            msg.append(f"  row {r} of {got.shape[0]}, column {c} of {got.shape[-1]}, "
-                       "inside a full tile")
+           f"  {int(bad.sum())} of {bad.size} elements ({frac:.1%}) are outside tolerance"]
+    G, W, B = _as_2d(got), _as_2d(want), _as_2d(bad)
+    msg += ["  " + s for s in _tile_lines(B, got.shape)]
+    msg.append("  " + _pattern_line(B))
+    msg.append("  " + _direction_line(G, W, B, rtol, atol))
     return "\n".join(msg)
 
 
-def verify(kernel_fn, n, tol=1e-4, stop_early=True):
+def verify(kernel_fn, n, tol=None, stop_early=True):
+    """Run every case of level n. `tol`: None = derived per case, float = rtol override."""
     spec = LEVELS[n]
     cases = spec["build"]()
     failures, passed = [], 0
@@ -342,7 +585,7 @@ def verify(kernel_fn, n, tol=1e-4, stop_early=True):
             if stop_early:
                 break
             continue
-        m = describe_mismatch(got, want, tol)
+        m = describe_mismatch(got, want, tol, spec["n_acc"](*args))
         if m:
             shp = tuple(np.shape(args[0]))
             failures.append((f"{label} input{shp}", m))
@@ -397,32 +640,221 @@ def kernel(x, a, b):
     return np.einsum('ij,->ij', a * x + b, 1.0).clip(0)
 """
 
+# Off-by-one in the slice end of the final partial column tile: the last column is never written.
+_BAD_1_LASTCOL = """
+import numpy as np
+def kernel(x, a, b):
+    out = np.zeros_like(x)
+    R, C = x.shape
+    for r0 in range(0, R, 128):
+        for c0 in range(0, C, 512):
+            c1 = c0 + 512 if c0 + 512 <= C else C - 1
+            y = a * x[r0:r0+128, c0:c1] + b
+            out[r0:r0+128, c0:c1] = np.where(y > 0, y, 0.0)
+    return out
+"""
+
+# Loop-step bug: only every other row of each tile is processed.
+_BAD_1_STRIDE = """
+import numpy as np
+def kernel(x, a, b):
+    out = np.zeros_like(x)
+    R, C = x.shape
+    for r0 in range(0, R, 128):
+        for c0 in range(0, C, 512):
+            y = a * x[r0:r0+128:2, c0:c0+512] + b
+            out[r0:r0+128:2, c0:c0+512] = np.where(y > 0, y, 0.0)
+    return out
+"""
+
+# Correct float32 tiled softmax (three passes, sequential float32 accumulation).
+_GOOD_5 = """
+import numpy as np
+def kernel(x):
+    R, C = x.shape
+    out = np.empty(x.shape, np.float32)
+    for r0 in range(0, R, 128):
+        t = x[r0:r0+128].astype(np.float32)
+        m = np.full(t.shape[0], -np.inf, np.float32)
+        for c0 in range(0, C, 512):
+            u = t[:, c0:c0+512]
+            for j in range(u.shape[1]):
+                m = np.maximum(m, u[:, j])
+        s = np.zeros(t.shape[0], np.float32)
+        for c0 in range(0, C, 512):
+            e = np.exp(t[:, c0:c0+512] - m[:, None])
+            for j in range(e.shape[1]):
+                s = s + e[:, j]
+        for c0 in range(0, C, 512):
+            out[r0:r0+128, c0:c0+512] = np.exp(t[:, c0:c0+512] - m[:, None]) / s[:, None]
+    return out
+"""
+
+# Correct float32 tiled layernorm (two-pass, sequential float32 accumulation).
+_GOOD_8 = """
+import numpy as np
+def kernel(x, eps=1e-5):
+    R, C = x.shape
+    out = np.empty_like(x)
+    for r0 in range(0, R, 128):
+        t = x[r0:r0+128]
+        s = np.zeros(t.shape[0], np.float32)
+        for c0 in range(0, C, 512):
+            u = t[:, c0:c0+512]
+            for j in range(u.shape[1]):
+                s = s + u[:, j]
+        mu = s / np.float32(C)
+        v = np.zeros(t.shape[0], np.float32)
+        for c0 in range(0, C, 512):
+            d = t[:, c0:c0+512] - mu[:, None]
+            for j in range(d.shape[1]):
+                v = v + d[:, j] * d[:, j]
+        inv = np.float32(1.0) / np.sqrt(v / np.float32(C) + np.float32(eps))
+        for c0 in range(0, C, 512):
+            out[r0:r0+128, c0:c0+512] = (t[:, c0:c0+512] - mu[:, None]) * inv[:, None]
+    return out
+"""
+
+# Correct float32 tiled matmul (float32 accumulator over 128-deep K tiles).
+_GOOD_7 = """
+import numpy as np
+def kernel(a, b):
+    M, K = a.shape
+    N = b.shape[1]
+    out = np.zeros((M, N), np.float32)
+    for m0 in range(0, M, 128):
+        for n0 in range(0, N, 512):
+            acc = np.zeros((min(128, M - m0), min(512, N - n0)), np.float32)
+            for k0 in range(0, K, 128):
+                acc += a[m0:m0+128, k0:k0+128] @ b[k0:k0+128, n0:n0+512]
+            out[m0:m0+128, n0:n0+512] = acc
+    return out
+"""
+
+# The criterion this harness used before: bare relative 1e-4 against max(|want|, 1e-30).
+_OLD_TOL = (1e-4, 1e-34)
+
+
+def _load(src, name):
+    ns = {}
+    exec(compile(src, name, "exec"), ns)
+    return ns["kernel"]
+
+
+def _old_worst_rel(got, want):
+    got = np.asarray(got, np.float64)
+    want = np.asarray(want, np.float64)
+    rel = np.abs(got - want) / np.maximum(np.abs(want), 1e-30)
+    i = int(np.argmax(rel))
+    return float(rel.flat[i]), float(want.flat[i]), float(got.flat[i])
+
 
 def selftest():
     print("Proving the harness catches planted bugs. If any line says UNDETECTED, the")
     print("harness is useless and nothing built on it can be trusted.\n")
     rc = 0
-    ns = {}
-    exec(compile(_GOOD_1, "good", "exec"), ns)
-    r = verify(ns["kernel"], 1)
-    print(f"  correct kernel                 -> {'PASS (good)' if r['ok'] else 'UNDETECTED-REGRESSION: harness rejects a correct kernel'}")
+
+    def expect(label, msg, *needles, absent=()):
+        """A planted bug must be caught AND carry the expected localisation tags."""
+        nonlocal rc
+        if msg is None:
+            print(f"  {label:<38} -> UNDETECTED")
+            rc |= 1
+            return
+        missing = [s for s in needles if s not in msg]
+        wrong = [s for s in absent if s in msg]
+        if missing or wrong:
+            print(f"  {label:<38} -> caught but MISLOCALISED (missing {missing}, "
+                  f"should not say {wrong})")
+            rc |= 1
+        else:
+            print(f"  {label:<38} -> caught, localised as {', '.join(needles)}")
+        print(textwrap.indent(msg, "      "))
+
+    # -- the original checks
+    r = verify(_load(_GOOD_1, "good"), 1)
+    print(f"  {'correct kernel (level 1)':<38} -> "
+          f"{'PASS (good)' if r['ok'] else 'UNDETECTED-REGRESSION: harness rejects a correct kernel'}")
     rc |= 0 if r["ok"] else 1
 
-    ns = {}
-    exec(compile(_BAD_1_EDGE, "bad", "exec"), ns)
-    r = verify(ns["kernel"], 1)
-    print(f"  ragged-edge bug                -> {'caught' if not r['ok'] else 'UNDETECTED'}")
+    r = verify(_load(_BAD_1_EDGE, "bad"), 1)
+    print(f"  {'ragged-edge bug (x1.0001, level 1)':<38} -> {'caught' if not r['ok'] else 'UNDETECTED'}")
     rc |= 0 if not r["ok"] else 1
     if not r["ok"]:
         print(textwrap.indent(r["failures"][0][1], "      "))
+    # same bug on a shape with full tiles + a partial column tile: must claim the ragged edge
+    xg = _rng(11).standard_normal((200, 700)).astype(np.float32)
+    k = _load(_BAD_1_EDGE, "bad")
+    expect("  same bug, shape (200, 700)", describe_mismatch(k(xg, 2.5, -0.5), _ref_1(xg, 2.5, -0.5)),
+           "TILE RAGGED-EDGE-COLS", "PATTERN COL-BLOCK", "DIRECTION TOO-LARGE")
 
+    # -- (a) correct kernels whose outputs reach ~0 must pass; the old criterion failed them
+    print()
+    x = np.tile(np.linspace(0.0, -100.0, 600, dtype=np.float32), (3, 1))
+    xd = x.astype(np.float64)
+    e = np.exp(xd - xd.max(axis=1, keepdims=True))
+    want = e / e.sum(axis=1, keepdims=True)                 # float64 reference, not downcast
+    got = _load(_GOOD_5, "good5")(x)
+    near = want[(want > 1e-13) & (want < 1e-11)]
+    old_w, old_e, old_g = _old_worst_rel(got, want)
+    old_ok = old_w <= 1e-4
+    new_m = describe_mismatch(got, want, None, 600)
+    rt, at = tolerance(want, 600)
+    print(f"  (a) correct float32 softmax, outputs {want.max():.2g} down to {want.min():.2g},")
+    print(f"      {near.size} outputs in (1e-13, 1e-11), e.g. {near[0]:.3g}; rtol {rt:.3g}, atol {at:.3g}")
+    print(f"      old relative 1e-4: {'pass' if old_ok else 'FAIL'} (worst rel {old_w:.3g}: "
+          f"expected {old_e:.3g}, got {old_g:.3g})")
+    print(f"      new mixed:         {'PASS (good)' if new_m is None else 'FAIL'}")
+    rc |= 0 if new_m is None else 1
+    if new_m:
+        print(textwrap.indent(new_m, "      "))
+    for n, src, name in ((5, _GOOD_5, "softmax"), (7, _GOOD_7, "matmul"), (8, _GOOD_8, "layernorm")):
+        k = _load(src, name)
+        new = verify(k, n, stop_early=False)
+        old = verify(k, n, tol=_OLD_TOL, stop_early=False)
+        print(f"  (a) correct float32 {name:<9} level {n:>2}: new {new['passed']}/{new['total']} "
+              f"{'PASS (good)' if new['ok'] else 'FAIL'}; old relative 1e-4 passed "
+              f"{old['passed']}/{old['total']}")
+        rc |= 0 if new["ok"] else 1
+        if not new["ok"]:
+            print(textwrap.indent(new["failures"][0][1], "      "))
+        elif not old["ok"]:
+            lbl, m = old["failures"][0]
+            print(f"      old criterion's first false fail, case {lbl}: " + m.splitlines()[1].strip())
+
+    # -- (b) off-by-one in the last partial tile, shape with full tiles + a partial tile
+    print()
+    k = _load(_BAD_1_LASTCOL, "lastcol")
+    expect("(b) off-by-one, shape (200, 700)", describe_mismatch(k(xg, 2.5, -0.5), _ref_1(xg, 2.5, -0.5)),
+           "TILE RAGGED-EDGE-COLS", "PATTERN LAST-COL", "DIRECTION ZERO")
+    # -- (c) the same bug on a shape smaller than one tile: must NOT claim the ragged edge
+    xs = _rng(12).standard_normal((8, 100)).astype(np.float32)
+    expect("(c) same off-by-one, shape (8, 100)", describe_mismatch(k(xs, 2.5, -0.5), _ref_1(xs, 2.5, -0.5)),
+           "TILE SUB-TILE-SHAPE", "PATTERN LAST-COL", absent=("RAGGED-EDGE",))
+    # -- (d) every other row skipped
+    k = _load(_BAD_1_STRIDE, "stride")
+    expect("(d) skips every other row", describe_mismatch(k(xg, 2.5, -0.5), _ref_1(xg, 2.5, -0.5)),
+           "PATTERN STRIDE-ROWS", "one in every 2, starting at 1", "DIRECTION ZERO",
+           absent=("RAGGED-EDGE",))
+    # -- direction classes on a whole-array error
+    w = _ref_5(_rng(13).standard_normal((40, 50)).astype(np.float32))
+    expect("constant factor 1.5", describe_mismatch(w * 1.5, w, None, 50),
+           "PATTERN ALL-ROWS", "DIRECTION SCALED")
+    expect("sign flip", describe_mismatch(-w, w, None, 50), "DIRECTION SIGN-FLIPPED")
+
+    # -- rule checks
+    print()
     v = check_rules(_BAD_1_CHEAT, 1)
-    print(f"\n  banned einsum                  -> {'caught: ' + v[0] if v else 'UNDETECTED'}")
+    print(f"  {'banned einsum':<38} -> {'caught: ' + v[0] if v else 'UNDETECTED'}")
     rc |= 0 if v else 1
 
     v = check_rules("import numpy as np\ndef kernel(x):\n    return x.sum(axis=1)\n", 2)
-    print(f"  level-2 .sum() cheat            -> {'caught: ' + v[0] if v else 'UNDETECTED'}")
+    print(f"  {'level-2 .sum() cheat':<38} -> {'caught: ' + v[0] if v else 'UNDETECTED'}")
     rc |= 0 if v else 1
+
+    print()
+    print("SELFTEST PASSED: every planted bug caught and localised, every correct kernel accepted."
+          if rc == 0 else "SELFTEST FAILED: see the lines above.")
     return rc
 
 
@@ -434,7 +866,8 @@ def main():
     ap.add_argument("--level", type=int)
     ap.add_argument("--show", action="store_true", help="print the reference for this level")
     ap.add_argument("--check", metavar="FILE.py", help="verify a candidate kernel")
-    ap.add_argument("--tol", type=float, default=1e-4)
+    ap.add_argument("--tol", type=float, default=None,
+                    help="override the derived rtol (atol still scales with the output RMS)")
     ap.add_argument("--all-failures", action="store_true",
                     help="do not stop at the first failing case")
     ap.add_argument("--selftest", action="store_true")
@@ -461,6 +894,8 @@ def main():
         print(f"level {n}: {s['name']}\ntrap: {s['trap']}\n")
         print("REFERENCE (your kernel must match this, with the same signature):\n")
         print(textwrap.indent(inspect.getsource(s["ref"]), "  "))
+        print(f"tolerance: |got-want| <= atol + rtol*|want|, rtol = max(8*sqrt(n_acc)*eps32, 1e-5), "
+              f"atol = rtol*RMS(reference); n_acc = {s['n_acc_doc']}")
         print(f"banned for this level: {sorted(BANNED_RUNG.get(n, set())) or 'nothing extra'}")
         print(f"always banned: {sorted(BANNED_GLOBAL)}")
         print(f"\n{len(s['build']())} test cases, including partial tiles, prime dimensions, "

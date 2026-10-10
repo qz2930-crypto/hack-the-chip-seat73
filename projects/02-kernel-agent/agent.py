@@ -550,10 +550,14 @@ def main():
                          "first prompt (not a complete kernel)")
     ap.add_argument("--retrieve", action="store_true",
                     help="LEVER: append the AWS doc excerpt keyed by the failure bucket to repairs")
+    ap.add_argument("--directional", action="store_true",
+                    help="numerical feedback names the direction of the error, never the target "
+                         "value (nkibench.DIRECTIONAL)")
     ap.add_argument("--empty-terse", action="store_true",
                     help="LEVER: escalate terseness on every empty answer (STATE.md's untried fix)")
     a = ap.parse_args()
     a.run_index = 0
+    nkibench.DIRECTIONAL = a.directional
 
     if not a.offline:
         # Validate before the first request. An empty or scheme-less value produces a hostname

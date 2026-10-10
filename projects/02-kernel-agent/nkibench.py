@@ -427,6 +427,43 @@ def check_rules(src, level_n):
 
 # ---------------------------------------------------------------- layer 1b: numerics
 
+# Non-negotiable on seat 73: feedback says WHICH element is wrong and in WHICH DIRECTION, never the
+# target value (Project 1 measured that a printed target is copied, not derived). agent.py sets this
+# with --directional; the upstream message (expected X, got Y) stays the default so that A/B rows
+# measured before the switch remain comparable.
+DIRECTIONAL = False
+
+
+def _direction(g, w):
+    if w == 0:
+        return "your value should be zero and is not."
+    if np.sign(g) != np.sign(w) and g != 0:
+        return "your value has the WRONG SIGN."
+    r = abs(g) / abs(w)
+    # banded, so a single element's target cannot be back-computed from the message
+    band = ("slightly" if abs(r - 1) < 0.1 else "substantially" if 0.5 < r < 2
+            else "by more than 2x")
+    return f"your value is TOO {'LARGE' if r > 1 else 'SMALL'}, {band}."
+
+
+def _global_pattern(got, want):
+    """Whole-output patterns that each map to one instruction, without revealing values."""
+    out = []
+    m = np.abs(want) > 1e-6 * (np.abs(want).max() or 1)
+    if m.sum() > 4:
+        ratio = got[m] / want[m]
+        med = float(np.median(ratio))
+        if abs(med - 1) > 0.05 and float(np.std(ratio)) < 0.01 * abs(med):
+            out.append(f"  EVERY element is off by the same factor ({med:.4g}x): the structure is "
+                       f"right and a constant scale is wrong -- check the normalisation/scaling "
+                       f"step, not the loops.")
+    if got.ndim == 2 and got.shape[0] == got.shape[1] and np.allclose(got, want.T, rtol=1e-3,
+                                                                      atol=1e-6):
+        out.append("  your output equals the reference TRANSPOSED: swap the roles of the two "
+                   "output axes (or of stationary and moving).")
+    return out
+
+
 def describe_mismatch(got, want, tol=2e-2):
     """The message the agent learns from. Vague here is slow there."""
     got = np.asarray(got, np.float64)
@@ -468,11 +505,17 @@ def describe_mismatch(got, want, tol=2e-2):
                 f"destination indices for every tile.")
     i = int(np.argmax(err))
     idx = np.unravel_index(i, got.shape)
+    if DIRECTIONAL:
+        where = f"  at index {tuple(int(v) for v in idx)}: " + _direction(got.flat[i], want.flat[i])
+    else:
+        where = (f"  at index {tuple(int(v) for v in idx)}: expected {want.flat[i]:+.6g}, got "
+                 f"{got.flat[i]:+.6g}")
     msg = [f"NUMERICAL MISMATCH: worst error {worst:.3g} of the output's RMS ({scale:.4g}), "
            f"tolerance {tol:g}.",
-           f"  at index {tuple(int(v) for v in idx)}: expected {want.flat[i]:+.6g}, got "
-           f"{got.flat[i]:+.6g}",
+           where,
            f"  {float((err / scale > tol).mean()):.1%} of elements are outside tolerance"]
+    if DIRECTIONAL:
+        msg.extend(_global_pattern(got, want))
     if got.ndim >= 2:
         r, c = int(idx[0]), int(idx[-1])
         ragged = []

@@ -160,7 +160,7 @@ def reduce_snippet(src, lineno, name):
         return None
     if re.search(r",\s*\w+\s*\]$", V):
         return f"Remove the `{name}(...)` wrapper and add its argument directly."
-    if V4:
+    if V4 and V4_NAMING:
         a = _acc_name(tree, lineno, name)
         Vx = f"({V})" if re.search(r"[^\w.\[\]]", V) else V
         if name in ("max", "amax"):
@@ -183,6 +183,9 @@ def reduce_snippet(src, lineno, name):
 
 
 V4 = False
+# --v4 = rules + naming; --v4-rules = the two new rules only. Measured: the naming change made A3/A4
+# worse while A8 was solved, so the two parts are tested apart (LOG 16:1x).
+V4_NAMING = False
 
 
 def v4_instruct(bucket, fb, src, level):
@@ -585,6 +588,8 @@ def main():
     ap.add_argument("--v4", action="store_true",
                     help="v4: accumulator named after the model's own variable; softmax whole-row "
                          "three-pass structure (in words); mean/variance overwrite")
+    ap.add_argument("--v4-rules", action="store_true",
+                    help="only v4's two new rules (softmax whole-row, mean/variance overwrite), no renaming")
     ap.add_argument("--v3", action="store_true",
                     help="v3: snippet built from the model's own banned call; per-level causes")
     ap.add_argument("--v2", action="store_true",
@@ -593,7 +598,9 @@ def main():
     a = ap.parse_args()
     ap_v3 = "--v3" in sys.argv
     global V2, V3, V4
-    V4 = "--v4" in sys.argv
+    V4 = "--v4" in sys.argv or "--v4-rules" in sys.argv
+    global V4_NAMING
+    V4_NAMING = "--v4" in sys.argv
     V2 = a.v2
     V3 = ap_v3
     os.makedirs("runs", exist_ok=True)

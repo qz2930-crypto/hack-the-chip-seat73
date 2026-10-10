@@ -567,6 +567,8 @@ def main():
                          "-> tensor_reduce into a (C,1) tile), from E1/C1 transcripts")
     ap.add_argument("--v4-verdicts", action="store_true",
                     help="level-5 traffic instruction: name the lhsT load that must leave the n loop")
+    ap.add_argument("--v5-verdicts", action="store_true",
+                    help="levels 5-7 traffic instruction: load every operand tile exactly once")
     ap.add_argument("--directional", action="store_true",
                     help="numerical feedback names the direction of the error, never the target "
                          "value (nkibench.DIRECTIONAL)")
@@ -578,6 +580,7 @@ def main():
     verdicts.V2 = a.v2_verdicts
     verdicts.V3 = a.v3_verdicts
     verdicts.V4 = a.v4_verdicts
+    verdicts.V5 = a.v5_verdicts
 
     if not a.offline:
         # Validate before the first request. An empty or scheme-less value produces a hostname

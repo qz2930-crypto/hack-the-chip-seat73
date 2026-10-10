@@ -137,7 +137,28 @@ def _i_window_reduce(code):
 V4 = False
 
 
+# v5 (C5): one instruction for all of levels 5-7. Computed by hand for the largest public shape
+# (K=256 M=512 N=1024): reloads inside loops cost 2.00x (L4), hoisting lhsT 1.86x (L5 only),
+# hoisting rhs 1.14x (L5+L6), loading every tile exactly once 1.00x (L5+L6+L7). Proved before
+# use: the load-once kernel passes levels 5, 6 and 7 4/4 at 1.00x and every held-out case
+# (handwritten/sk7_load_once.py). It needs ~1.5 MB of SBUF for the largest test shape (24 MiB per
+# NeuronCore on trn2): "block = the whole matrix" is the end of level 6's block-size search space
+# that fits here. Larger matrices would need real blocking -- stated in the write-up.
+V5 = False
+
+_LOAD_ONCE = ("\n  CAUSE: the same lhsT/rhs tiles are copied from HBM more than once. Load every operand "
+              "tile exactly ONCE and keep it in SBUF: before any compute loop, build two 2-D Python "
+              "lists, a[k][m] = the (k_sz, m_sz) tile lhsT[k0:k0 + k_sz, m0:m0 + m_sz] and b[k][n] = "
+              "the (k_sz, n_sz) tile rhs[k0:k0 + k_sz, n0:n0 + n_sz], each filled by one "
+              "nisa.dma_copy. Then the m and n loops contain no dma_copy from lhsT or rhs at all: "
+              "for each (m, n) allocate one psum tile and call nisa.nc_matmul(dst=acc, "
+              "stationary=a[k][m], moving=b[k][n]) for every k, then copy it out once. Use plain "
+              "Python range() for the loading loops. Keep the min() tile sizes.")
+
+
 def traffic_hint(code, level):
+    if V5 and level in (5, 6, 7):
+        return _LOAD_ONCE
     if not V4 or level != 5:
         return ""
     lines = (code or "").splitlines()
@@ -377,6 +398,8 @@ def classify(feedback):
             return bucket
     if "must be reduced into a TILE, not a scalar" in fb:
         return "scalar_window_reduce"
+    if "Load every operand tile exactly ONCE" in fb:
+        return "traffic_reloads"
     if "the lhsT load is inside the n loop" in fb:
         return "traffic_lhs_not_hoisted"
     if "lists the axes in the wrong order" in fb:
@@ -502,6 +525,14 @@ def selftest():
     ok = traffic_hint(l5, 4) == "" and traffic_hint("for n in r:\n  pass\n", 5) == ""
     bad += not ok
     print(f"  {'ok  ' if ok else 'FAIL'} v4 silent off-level / when already hoisted")
+    global V5
+    V5 = True
+    ok = all("exactly ONCE" in traffic_hint("x", lv) for lv in (5, 6, 7)) and traffic_hint("x", 4) == ""
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} v5 load-once hint on levels 5-7 only")
+    ok = classify("CORRECT, BUT TOO MUCH" + traffic_hint("x", 6)) == "traffic_reloads"
+    bad += not ok
+    V5 = False
     V4 = False
     V3 = False
     V2 = False

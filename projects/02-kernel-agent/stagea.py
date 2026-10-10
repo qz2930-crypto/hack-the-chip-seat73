@@ -26,6 +26,7 @@ the shared endpoints are rate-limited and greedy: a repeated prompt would return
 """
 
 import argparse
+import ast
 import hashlib
 import inspect
 import json
@@ -113,6 +114,82 @@ def v2_instruct(bucket, feedback, src, level):
     return None
 
 
+# ---------------------------------------------------------------- v3 (A3_qwen)
+#
+# From a root-cause pass over every Stage-A attempt (LOG 15:1x). v2's snippet hard-coded the summed
+# array as `x` and returned (R,): A4 dropped its **2 and A5 summed x instead of e, so v2 made both
+# worse. v3 builds the snippet from the model's OWN banned call (its argument becomes V), tile-local,
+# (rows, 1). Plus four level-specific causes, each checked by fixing the model's own code: per-tile
+# statistic (A4/A8), (rows,) statistic (A8), transposed output allocation (A6), band built from
+# relative positions (A9).
+V3 = False
+
+
+def reduce_snippet(src, lineno, name):
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return None
+    V = None
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and getattr(n, "lineno", -1) == lineno and \
+                getattr(n.func, "attr", getattr(n.func, "id", None)) == name:
+            f = n.func
+            mod = isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and \
+                f.value.id in ("np", "numpy")
+            target = n.args[0] if (mod or isinstance(f, ast.Name)) and n.args else \
+                (f.value if isinstance(f, ast.Attribute) else None)
+            if target is not None:
+                V = ast.get_source_segment(src, target)
+            break
+    if not V:
+        return None
+    if re.search(r",\s*\w+\s*\]$", V):
+        return f"Remove the `{name}(...)` wrapper and add its argument directly."
+    if name in ("max", "amax"):
+        init, step = "np.full((V.shape[0], 1), -np.inf, dtype=np.float32)", "s = np.maximum(s, V[:, c:c+1])"
+    else:
+        init, step = "np.zeros((V.shape[0], 1), dtype=np.float32)", "s += V[:, c:c+1]"
+    tail = "\ns = s / x.shape[1]   # divide by the FULL row length" if name in ("mean", "average") else ""
+    return (f"V = {V}\ns = {init}\nfor c in range(V.shape[1]):\n    {step}{tail}\n"
+            f"Use s where the `{name}(..., keepdims=True)` result was; s has shape (rows, 1).")
+
+
+def v3_instruct(bucket, fb, src, level):
+    if bucket == "rule_framework_call":
+        m = re.search(r"line (\d+): (?:calls banned|method) `\.?(\w+)", fb)
+        if m and m.group(2) in ("sum", "mean", "max", "amax"):
+            sn = reduce_snippet(src, int(m.group(1)), m.group(2))
+            if sn:
+                return bucket, (f"Line {m.group(1)} calls banned `{m.group(2)}`. Replace that call with "
+                                f"exactly:\n{sn}\nKeep everything else identical.")
+    if re.search(r"shapes \((\d+),\d+\) \(\1,\)", fb):
+        return "stat_1d", ("A per-row statistic has shape (rows,) but divides a (rows, cols) tile. Make "
+                           "it (rows, 1): add [:, None] where it is computed. Keep everything else "
+                           "identical.")
+    if level == 6 and re.search(r"from shape \((\d+),(\d+)\) into shape \(\2,\1\)", fb):
+        return "transpose_dest", ("The output is the transpose: allocate it as np.empty((cols, rows), "
+                                  "dtype=x.dtype) and write each tile to result[j:end_col, i:end_row] = "
+                                  "tile.T. Keep everything else identical.")
+    if level == 9 and re.search(r"np\.abs\((\w+)\[:,\s*None\]\s*-\s*\1\[None,\s*:\]\)", src or ""):
+        return "band_index", ("The band mask compares the q tile's positions with themselves. Use "
+                              "absolute positions of both tiles: qi = np.arange(i, i + q_tile.shape[0]); "
+                              "kj = np.arange(j, j + k_tile.shape[0]); band = np.abs(qi[:, None] - "
+                              "kj[None, :]) <= w. Keep everything else identical.")
+    m = re.search(r"cases pass\. On [\w ]+ input\(\d+, (\d+)\)", fb)
+    if level in (4, 5, 8) and m and int(m.group(1)) > 512 and "TILE NOT-EDGE" in fb:
+        return "per_tile_stat", ("Only rows longer than 512 fail: each column tile is normalised by its "
+                                 "OWN partial statistic. Per row tile, pass 1 loops over ALL column tiles "
+                                 "accumulating one (rows, 1) statistic; only after that loop, pass 2 "
+                                 "loops over the column tiles again and writes the output. Delete any "
+                                 "other loop that re-normalises column tiles.")
+    if bucket == "non_finite_output" and level in (4, 8):
+        return bucket, ("NaN here comes from sqrt of a negative value: the value under sqrt must be a "
+                        "mean of squares (or of squared deviations) over the whole row, which is never "
+                        "negative.")
+    return None
+
+
 # ---------------------------------------------------------------- verdict -> instruction
 
 def instruct(kind, detail, level):
@@ -142,7 +219,8 @@ def instruct(kind, detail, level):
         if "IndexError" in detail or "out of bounds" in detail:
             return "out_of_bounds", (f"It crashed: {detail}. Clamp every tile end to the array: "
                                      f"r1 = min(r0 + 128, R), c1 = min(c0 + 512, C).")
-        if "could not be broadcast" in detail or "shapes" in detail:
+        # numpy says "could not broadcast input array" -- the old test missed it (A6 -> raised_other)
+        if "broadcast" in detail or "shapes" in detail:
             return "assign_shape_mismatch", (f"It crashed: {detail}. The slice you write into and "
                                              f"the value must have the same shape -- size the "
                                              f"destination slice with the clamped tile ends.")
@@ -363,9 +441,13 @@ def solve(a, cli, level, log, run):
         m = CODE_BLOCK.findall(v["content"])
         src = max(m, key=len).strip() if m else ""
         reward, parts, bucket, fb, frac = grade(src, level)
-        if V2:
-            better = v2_instruct(bucket, fb, src, level)
+        if V3:
+            better = v3_instruct(bucket, fb, src, level)
             if better:
+                bucket, fb = better
+        if V2 and not (V3 and better):
+            better = v2_instruct(bucket, fb, src, level)
+            if better and not (V3 and better[0] == "rule_framework_call"):   # v3 replaces rule 2
                 bucket, fb = better
         best = max(best, reward)
         sec = {"task": 0, "code": 0, "error": 0, "ledger": 0}
@@ -443,12 +525,16 @@ def main():
     ap.add_argument("--tag", default="A")
     ap.add_argument("--log", default="")
     ap.add_argument("--offline", action="store_true")
+    ap.add_argument("--v3", action="store_true",
+                    help="v3: snippet built from the model's own banned call; per-level causes")
     ap.add_argument("--v2", action="store_true",
                     help="v2 instructions: combine column tiles in a reduction; give the exact loop "
                          "that replaces a banned reduction")
     a = ap.parse_args()
-    global V2
+    ap_v3 = "--v3" in sys.argv
+    global V2, V3
     V2 = a.v2
+    V3 = ap_v3
     os.makedirs("runs", exist_ok=True)
     cli = None if a.offline else Client(a)
     levels = parse_levels(a.levels)

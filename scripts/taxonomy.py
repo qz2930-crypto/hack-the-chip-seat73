@@ -55,6 +55,8 @@ DEFS = {
     "contraction_mismatch": ("nc_matmul operands disagree on K -- often nc_matmul used for a "
                              "non-matmul op", "same first dim for both operands, or do not use "
                              "nc_matmul for data movement"),
+    "rule_device_comprehension": ("comprehension in the kernel: passes the simulator, rejected by the "
+                                  "device compiler", "for loop + .append (--device-rules)"),
     "kloop_outside": ("[L5-7] contraction loop k outside m/n: fresh PSUM per k, nothing accumulates",
                       "m, n, then k innermost; one psum acc per (m, n) (--v8)"),
     "psum_sbuf_conflated": ("[L8] one name for the PSUM tile and the SBUF tile",

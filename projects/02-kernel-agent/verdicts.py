@@ -591,6 +591,7 @@ _STAGES = [
     ("rule_missing_jit", r"^Rule violations.*not decorated with `@nki\.jit`"),
     ("rule_partition_over_128", r"^Rule violations.*partition dimension \d+ exceeds"),
     ("rule_framework_call", r"^Rule violations.*(calls `|uses `|operator)"),
+    ("rule_device_comprehension", r"^Rule violations.*not supported by the Neuron device compiler"),
     ("rule_other", r"^Rule violations"),
     ("invented_import", r"^There is no module named"),
     ("load_error", r"could not be loaded"),

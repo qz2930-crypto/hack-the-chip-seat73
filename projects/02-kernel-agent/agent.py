@@ -591,6 +591,9 @@ def main():
                     help="L6 traffic hint = L7's (accumulate in one PSUM tile across the contraction); "
                          "API card's 'already transposed' only for levels 3-7; L8 skeleton names "
                          "the separate psum and sbuf tiles")
+    ap.add_argument("--device-rules", action="store_true",
+                    help="static scan also rejects constructs the device compiler rejects but the "
+                         "simulator accepts (list comprehensions), measured on Trainium")
     ap.add_argument("--directional", action="store_true",
                     help="numerical feedback names the direction of the error, never the target "
                          "value (nkibench.DIRECTIONAL)")
@@ -606,6 +609,7 @@ def main():
     verdicts.V6 = a.v6_verdicts
     verdicts.V7 = a.v7_verdicts
     verdicts.V8 = a.v8_verdicts
+    nkibench.DEVICE_RULES = a.device_rules
     nkibench.PROMPT_FIXES = levers.PROMPT_FIXES = a.prompt_fixes
 
     if not a.offline:

@@ -422,6 +422,17 @@ def check_rules(src, level_n):
     elif spec["entry"] not in decorated:
         bad.append(f"`{spec['entry']}` is not decorated with `@nki.jit`, so it will run as "
                    f"plain Python rather than compiling for the device.")
+    if DEVICE_RULES:
+        try:
+            for node in ast.walk(ast.parse(src)):
+                if isinstance(node, (ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp)):
+                    out_msg = (f"line {node.lineno}: a comprehension ([... for ... in ...]) is not "
+                               f"supported by the Neuron device compiler (it passes the simulator, "
+                               f"then fails on the chip). Build the list with a plain for loop and "
+                               f".append() instead.")
+                    bad.append(out_msg)
+        except SyntaxError:
+            pass
     return sorted(set(bad))
 
 
@@ -433,6 +444,11 @@ def check_rules(src, level_n):
 # measured before the switch remain comparable.
 DIRECTIONAL = False
 PROMPT_FIXES = False
+# Measured on the device (LOG 15:1x): a list comprehension inside an NKI kernel passes nki.simulate but
+# the real tracer rejects it ("unsupported expression"), which is how the agent's L7 kernel failed on
+# the chip. With DEVICE_RULES on (agent.py --device-rules), the static scan reports it, so the agent
+# learns the device's rule in the inner loop instead of after a compile.
+DEVICE_RULES = False
 
 
 def _direction(g, w):

@@ -392,6 +392,117 @@ def l8_hint(feedback, code, level):
     return v8a(feedback, code) or v8b(feedback, code)
 
 
+
+# v9 (C10), from the L8 analysis of c8/c9 (LOG 16:0x): from round 2 every L8 run loops on
+# tensor_scalar's argument ROLES (data= the tile vs operand0= the scalar), and 7 error kinds had no
+# translation. The simulator surfaces one error per round, so a kernel with five API misuses needs
+# five rounds. signature_lint() reports ALL nisa/nl call misuses in one round, before simulation.
+V9 = False
+_NL_OPS = {"multiply", "subtract", "add", "divide", "maximum", "minimum", "exp", "power"}
+
+
+def signature_lint(code):
+    """[(line, message)] for every nisa.*/nl.* call whose keywords do not fit the real signature, plus
+    tensor_scalar role swaps. Needs the SDK; returns [] without it."""
+    import inspect
+    try:
+        import nki.isa as nisa_mod
+        import nki.language as nl_mod
+        tree = ast.parse(code or "")
+    except Exception:
+        return []
+    mods = {"nisa": nisa_mod, "nl": nl_mod}
+    out = []
+    for c in ast.walk(tree):
+        if not (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                and isinstance(c.func.value, ast.Name) and c.func.value.id in mods):
+            continue
+        fn = getattr(mods[c.func.value.id], c.func.attr, None)
+        if fn is None:
+            continue                       # invented names are handled by the simulator rule
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            continue
+        params = sig.parameters
+        if any(p.kind == p.VAR_KEYWORD for p in params.values()):
+            continue
+        given = [k.arg for k in c.keywords if k.arg]
+        bad = [k for k in given if k not in params]
+        nposit = len(c.args)
+        names = list(params)
+        bound = set(names[:nposit]) | set(given)
+        missing = [n for n, p in params.items() if p.default is p.empty and
+                   p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) and n not in bound]
+        call = f"{c.func.value.id}.{c.func.attr}"
+        if bad:
+            out.append((c.lineno, f"line {c.lineno}: {call}() has no argument(s) {bad}; its real "
+                                  f"signature is {call}{sig}"))
+        if missing:
+            out.append((c.lineno, f"line {c.lineno}: {call}() is missing required argument(s) "
+                                  f"{missing}; its real signature is {call}{sig}"))
+        if c.func.attr == "tensor_scalar":
+            kw = {k.arg: k.value for k in c.keywords}
+            isop = lambda v: isinstance(v, ast.Attribute) and v.attr in _NL_OPS
+            isnum = lambda v: isinstance(v, (ast.Constant, ast.BinOp)) and not isinstance(v, ast.Name)
+            if "data" in kw and (isnum(kw["data"]) or isop(kw["data"])):
+                out.append((c.lineno, f"line {c.lineno}: tensor_scalar(data=...) must be the TILE being "
+                                      f"transformed, not a number or an operation; the number goes in "
+                                      f"operand0= and the nl operation in op0="))
+            if "operand0" in kw and isop(kw["operand0"]):
+                out.append((c.lineno, f"line {c.lineno}: tensor_scalar(operand0=...) is the number or "
+                                      f"(P, 1) tile; the nl operation goes in op0="))
+        if c.func.attr == "activation":
+            kw = {k.arg for k in c.keywords}
+            if "src" in kw and "data" not in kw:
+                pass                       # already reported as a bad kwarg above
+    return out
+
+
+def _i_missing(m, t):
+    sig = _real_signature(m.group(1))
+    return (f" Pass every argument of {m.group(1)} by keyword." + (f" Real signature: {sig}." if sig else "")
+            + " For nisa.tensor_scalar: data= is the TILE being transformed, op0= the nl operation "
+            "(nl.multiply, nl.subtract), operand0= the Python number or the (P, 1) per-row tile.")
+
+
+def _i_undef(m, t):
+    if m.group(1) == "np":
+        return " numpy is not available inside the kernel. Write the scale in plain Python: 1.0 / (D ** 0.5)."
+    return f" `{m.group(1)}` is never defined. Define it before its first use."
+
+
+def _i_unbound(m, t):
+    return (f" `{m.group(1)}` is read before the line that allocates it. Remove it from the earlier call, "
+            f"or move its nl.ndarray and the call that fills it above that use.")
+
+
+def mm_hint(feedback, code, level):
+    """Level 8: the scores matmul given the (S, D) tile as loaded instead of its transpose."""
+    if not V9 or level != 8 or "contraction dimension mismatch" not in (feedback or ""):
+        return ""
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        return ""
+    loaded = set()
+    for c in ast.walk(tree):
+        if isinstance(c, ast.Call) and ast.unparse(c.func).endswith("dma_copy"):
+            kw = {k.arg: k.value for k in c.keywords}
+            if isinstance(kw.get("dst"), ast.Name) and isinstance(kw.get("src"), ast.Name) and \
+                    kw["src"].id in ("q", "k", "v"):
+                loaded.add(kw["dst"].id)
+    for c in ast.walk(tree):
+        if isinstance(c, ast.Call) and ast.unparse(c.func).endswith("nc_matmul"):
+            kw = {k.arg: k.value for k in c.keywords}
+            st = kw.get("stationary")
+            if isinstance(st, ast.Name) and st.id in loaded and not st.id.startswith("v"):
+                return (f"\n  CAUSE: stationary=`{st.id}` is the (S, D) tile as loaded. The scores "
+                        f"contract over D, so pass the transposed (D, S) SBUF tiles you built with "
+                        f"nc_transpose: stationary=qT, moving=kT.")
+    return ""
+
+
 _PARTITION_COLLAPSED = re.compile(r"Partition dim size must be preserved, got (\d+) -> (\d+)")
 
 
@@ -542,6 +653,11 @@ RULES = [
     ("engine_cannot_reach_hbm", r"(\w+) (?:dst|src)? ?must be in \['sbuf', 'psum'\], got shared_hbm",
      _i_hbm_engine),
     ("wrong_buffer", r"(\w+) must be in \['(\w+)'\], got (\w+)", _i_buffer),
+    ("missing_positional", r"(\w+)\(\) missing \d+ required positional arguments?: '(\w+)'",
+     lambda m, t: _i_missing(m, t) if V9 else ""),
+    ("undefined_name", r"NameError: name '(\w+)' is not defined", lambda m, t: _i_undef(m, t) if V9 else ""),
+    ("used_before_assigned", r"cannot access local variable '(\w+)' where it is not associated",
+     lambda m, t: _i_unbound(m, t) if V9 else ""),
     ("contraction_mismatch", r"Matmul contraction dimension mismatch: stationary\[0\]=(\d+) != "
                              r"moving\[0\]=(\d+)", _i_contraction_mismatch),
     ("arg_bound_twice", r"got multiple values for argument", _i_multi),
@@ -618,6 +734,8 @@ def classify(feedback):
             return bucket
     if "must be reduced into a TILE, not a scalar" in fb:
         return "scalar_window_reduce"
+    if fb.startswith("API misuse"):
+        return "api_misuse_lint"
     if "the contraction loop over k is OUTSIDE" in fb:
         return "kloop_outside"
     if "is used as BOTH the PSUM tile and the SBUF tile" in fb:

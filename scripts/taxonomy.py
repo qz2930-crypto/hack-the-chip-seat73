@@ -57,6 +57,11 @@ DEFS = {
                              "nc_matmul for data movement"),
     "rule_device_comprehension": ("comprehension in the kernel: passes the simulator, rejected by the "
                                   "device compiler", "for loop + .append (--device-rules)"),
+    "api_misuse_lint": ("nisa/nl calls with wrong/missing keywords or swapped tensor_scalar roles "
+                        "(caught statically, all at once)", "fix every listed call (--v9)"),
+    "missing_positional": ("a required argument is missing", "pass every argument by keyword (--v9)"),
+    "undefined_name": ("a name (often np) used inside the kernel is undefined", "define it / plain Python (--v9)"),
+    "used_before_assigned": ("a tile read before it is allocated", "reorder (--v9)"),
     "kloop_outside": ("[L5-7] contraction loop k outside m/n: fresh PSUM per k, nothing accumulates",
                       "m, n, then k innermost; one psum acc per (m, n) (--v8)"),
     "psum_sbuf_conflated": ("[L8] one name for the PSUM tile and the SBUF tile",

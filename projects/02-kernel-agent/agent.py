@@ -88,6 +88,14 @@ def grade(source, level):
                 "these: " + " ".join(violations) + extra)
     parts["rules"] = True
 
+    if verdicts.V9:
+        # v9: report EVERY API-signature misuse at once instead of one per simulated round
+        lint = verdicts.signature_lint(source)
+        if lint:
+            return (sum(WEIGHTS[k] for k, v in parts.items() if v), parts,
+                    "API misuse -- fix ALL of these calls in this one round, change nothing else:\n"
+                    + "\n".join(f"- {m}" for _, m in lint[:8]))
+
     spec = nkibench.LEVELS[level]
     # per-process path: runq runs several jobs of the SAME level at once (race found 12:5x)
     # A FRESH path per call: Python's bytecode cache keys a module on (path, mtime-in-seconds, size),
@@ -135,6 +143,7 @@ def grade(source, level):
         except Exception as e:
             msg = enrich(f"raised {type(e).__name__}: {e}", source, level)
             msg += verdicts.l8_hint(msg, source, level)   # '' unless --v8-verdicts finds a cause
+            msg += verdicts.mm_hint(msg, source, level)   # '' unless --v9-verdicts finds a cause
             failures.append((nkibench.label(case, level), msg))
             continue
         parts["runs"] = True
@@ -596,6 +605,9 @@ def main():
     ap.add_argument("--device-rules", action="store_true",
                     help="static scan also rejects constructs the device compiler rejects but the "
                          "simulator accepts (list comprehensions), measured on Trainium")
+    ap.add_argument("--v9-verdicts", action="store_true",
+                    help="report every nisa/nl signature misuse at once (static lint), translate missing "
+                         "positional / undefined / used-before-assigned, L8 scores-matmul hint")
     ap.add_argument("--directional", action="store_true",
                     help="numerical feedback names the direction of the error, never the target "
                          "value (nkibench.DIRECTIONAL)")
@@ -611,6 +623,7 @@ def main():
     verdicts.V6 = a.v6_verdicts
     verdicts.V7 = a.v7_verdicts
     verdicts.V8 = a.v8_verdicts
+    verdicts.V9 = a.v9_verdicts
     nkibench.DEVICE_RULES = a.device_rules
     nkibench.PROMPT_FIXES = levers.PROMPT_FIXES = a.prompt_fixes
 

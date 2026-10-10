@@ -381,9 +381,11 @@ def offline_answers(level, n, rnd):
 def build_first(a, level, terse):
     """The first prompt, and the parts inserted into it (for token accounting)."""
     prompt = first_prompt(level, terse)
-    if a.prompt_fixes and not (3 <= level <= 7):
+    if a.prompt_fixes and level == 8:
         # the API card's matmul paragraph says "The left operand arrives already transposed"; true
-        # for levels 3-7 only -- at L8 the model took it to mean k needs no transpose (LOG 15:2x)
+        # for levels 3-7 only -- at L8 the model took it to mean k needs no transpose (LOG 15:2x).
+        # Scoped to level 8 ONLY: removing it at L1/L2 too changed their first prompt and 2/5 C9 L1
+        # runs degenerated into truncated answers (LOG 15:5x).
         prompt = prompt.replace("The left operand arrives already transposed, with K on the "
                                 "partition axis.", "")
     parts = dict(api=API_CARD if API_CARD in prompt else "")

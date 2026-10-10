@@ -236,6 +236,15 @@ def level(n, op, entry, teaches, optimization, ref, shapes, banned, notes="", ma
 
     The thresholds come from the shipped tiled kernel, which models at 2.00x the floor on the largest
     test shape: level 5 must beat that, level 6 must beat level 5, level 7 must be near the floor.
+
+    MEASURED (seat 73, nki 0.6 simulator, byte counter cross-checked by hand on K=256 M=512 N=1024):
+    the AWS tutorial kernels for these levels move, on the largest shape,
+        level 4 nki_matmul_tiled_                2.000x
+        level 5 nki_matmul_hoist_load_           1.857x   (upstream bar 1.60 REJECTED it)
+        level 6 nki_matmul_block_free_dimension_ 1.286x   (upstream bar 1.25 REJECTED it)
+        level 7 nki_matmul_fully_optimized_      1.000x
+    An official kernel failing its own level means the bar was wrong, so the bars sit just above each
+    measured tutorial ratio and below the previous level's: 1.90, 1.30, 1.05.
     """
     LEVELS[n] = dict(n=n, op=op, entry=entry, teaches=teaches, optimization=optimization,
                      ref=ref, shapes=shapes, banned=banned, notes=notes, max_waste=max_waste,
@@ -298,14 +307,14 @@ level(5, "matmul, loads hoisted", "nki_matmul_hoist_load_",
      "hoist the redundant loads out of the innermost loop. Cheap, mechanical, and the first "
      "measurable win. Arithmetic intensity rises.",
      ref_matmul, _MM_SHAPES,
-     {"matmul", "dot", "einsum", "tensordot", "inner", "vdot"}, max_waste=1.6)
+     {"matmul", "dot", "einsum", "tensordot", "inner", "vdot"}, max_waste=1.90)
 
 level(6, "matmul, M and N blocked", "nki_matmul_block_free_dimension_",
      "spending SBUF capacity to buy reuse",
      "hoisting reuses one row of tiles; SBUF holds far more. Now there is a SEARCH SPACE -- "
      "block sizes bounded by SBUF capacity -- so the agent has to explore rather than derive.",
      ref_matmul, _MM_SHAPES,
-     {"matmul", "dot", "einsum", "tensordot", "inner", "vdot"}, max_waste=1.25)
+     {"matmul", "dot", "einsum", "tensordot", "inner", "vdot"}, max_waste=1.30)
 
 level(7, "matmul, M, N and K blocked", "nki_matmul_fully_optimized_",
      "the full blocking scheme",
@@ -705,7 +714,8 @@ def verify(path, level_n, tol=2e-2, seed=0):
             failures.append((label(case, level_n),
                              f"RAISED during simulation: {type(e).__name__}: {e}"))
             continue
-        m = describe_mismatch(got, want, tol)
+        # The traffic bar is part of passing a level, so --check applies it exactly as the agent does.
+        m = describe_mismatch(got, want, tol) or check_traffic_bar(level_n, counted, args, want)
         if m:
             failures.append((label(case, level_n), m))
             continue

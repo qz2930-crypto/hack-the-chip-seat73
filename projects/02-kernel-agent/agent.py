@@ -503,13 +503,18 @@ def solve(a, level, log):
     best = (0.0, None, "")
     tried, streak, seen = [], 0, {}
     latest = ("", "")
+    grade_cache = {}
     for rnd in range(a.rounds):
         t0 = time.perf_counter()
         replies = run_samples(a, level, prompt, rnd)
         graded = []
         for si, (reply, meta) in enumerate(replies):
             src = extract_code(reply)
-            reward, parts, feedback = grade(src, level)
+            # Measured on seat 73: the local server decodes deterministically, so the samples of a
+            # round are usually byte-identical. Grading is deterministic too, so grade each text once.
+            if src not in grade_cache:
+                grade_cache[src] = grade(src, level)
+            reward, parts, feedback = grade_cache[src]
             graded.append((reward, src, feedback, parts))
             log.write(json.dumps(dict(tag=a.tag, run=a.run_index, level=level, round=rnd,
                                       sample=si, ts=time.time(), reward=reward, parts=parts,

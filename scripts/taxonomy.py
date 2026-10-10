@@ -59,6 +59,15 @@ DEFS = {
                      "name the slice and give the right index order (--v2-verdicts)"),
     "partition_collapsed": ("loops over / single-indexes the partition axis, collapsing it",
                             "keep the partition axis whole with ':'; no loop over it (--v2-verdicts)"),
+    "rule_fancy_indexing": ("[Stage A] boolean-mask or index-array indexing",
+                            "slices only; conditions via np.where on the whole tile"),
+    "stride_bug": ("wrong rows/cols form a regular stride: the loop steps wrong",
+                   "visit every row/col exactly once"),
+    "off_by_one": ("only the first/last row or column is wrong", "fix the loop bound / slice end"),
+    "wrong_scale": ("every value off by one constant factor", "fix the normalisation"),
+    "sign_flipped": ("got = -expected", "a subtraction is reversed"),
+    "index_shift": ("values come from the neighbouring row/col", "an index is off by one"),
+    "overflow": ("exp overflowed", "subtract the row max before exp"),
     "dma_shape_mismatch": ("dma_copy src and dst hold different numbers of elements",
                            "allocate the tile with exactly the slice's shape"),
     "assign_shape_mismatch": ("assigns a value into a slice of a different shape",
@@ -131,7 +140,9 @@ def snippet(code, n=10):
 def main(paths):
     rows = dedupe(load(paths))
     for r in rows:
-        r["_bucket"] = verdicts.classify(r.get("feedback", ""))
+        # Stage-A rows carry the bucket their own grader (stagea.instruct) assigned
+        r["_bucket"] = (r.get("bucket") if r.get("stage") == "A"
+                        else verdicts.classify(r.get("feedback", "")))
     total = len(rows)
     by_bucket = collections.Counter(r["_bucket"] for r in rows)
     by_bl = collections.Counter((r["_bucket"], r["level"]) for r in rows)

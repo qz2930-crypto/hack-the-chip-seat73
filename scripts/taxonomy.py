@@ -187,13 +187,15 @@ def main(paths):
         r["_bucket"] = (r.get("bucket") if r.get("stage") == "A"
                         else verdicts.classify(r.get("feedback", "")))
         r["_bucket"] = root_cause(r)
+        # Stage A (NumPy ladder) and Stage B (NKI ladder) are different ladders: never share a column
+        r["_lv"] = ("A" if r.get("stage") == "A" else "L") + str(r["level"])
     total = len(rows)
     by_bucket = collections.Counter(r["_bucket"] for r in rows)
-    by_bl = collections.Counter((r["_bucket"], r["level"]) for r in rows)
+    by_bl = collections.Counter((r["_bucket"], r["_lv"]) for r in rows)
     # group runs by experiment (tag prefix before "_L"): base, skel, c1, c2, retr, A_qwen ...
     exp = lambda r: (r.get("tag") or "?").split("_L")[0]
     by_bt = collections.Counter((r["_bucket"], exp(r)) for r in rows)
-    levels = sorted({r["level"] for r in rows})
+    levels = sorted({r["_lv"] for r in rows}, key=lambda v: (v[0] != "L", int(v[1:])))
     tags = sorted({exp(r) for r in rows})
     example = {}
     for r in rows:
@@ -208,7 +210,8 @@ def main(paths):
           f"whatever wording that run's feedback used. "
           f"All results **[sim]**.\n")
     print("## Counts by level\n")
-    print("| bucket | " + " | ".join(f"L{l}" for l in levels) + " | total | share |")
+    print("Columns L1-L8 are the NKI ladder (Stage B, [sim]); A1-A10 the NumPy ladder (Stage A, CPU).\n")
+    print("| bucket | " + " | ".join(levels) + " | total | share |")
     print("|---|" + "---|" * (len(levels) + 2))
     for b, n in by_bucket.most_common():
         print(f"| `{b}` | " + " | ".join(str(by_bl.get((b, l), 0) or "") for l in levels)

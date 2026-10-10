@@ -76,7 +76,9 @@ Rules for every message, each one learned from a measurement in LOG.md:
 | **v4** | L5: lhsT load is inside the n loop; move it out | **L5 0→5/5** (control 0/5) |
 | **v5** | L5–7: load every tile exactly once | **L7 0→5/5** (control 0/5) |
 | v7 / v8 / prompt fix | never-loaded inputs; k-loop outside; L6 hint = L7's | **L6 0→5/5** |
-| v6, v9, v10 | overflow; signature lint; L8 op sequence | L8: 0/5 so far, see RESULTS.md |
+| v6, v9 | overflow; static signature lint (all misuses at once) | L1–L7 held at 5/5 (C10); L8 0/5 |
+| v10 | L8: API card names tensor_reduce/reciprocal; op-order TODO | **reverted**: L8 unchanged, L1 2/5 |
+| Stage A v2→v4-smart | combine column tiles; snippet built from the model's own call; accumulator named after its variable only when 2+ reductions | Stage A 4/10 (v1) → **9/10** |
 | `--retrieve` | AWS doc excerpt per failure bucket | **no effect**, reverted |
 | `--mech` | AST fixes | dropped: 0 of 145 attempts needed it |
 

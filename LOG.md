@@ -180,3 +180,9 @@ Every decision, run and dead end, written as it happens.
 - **16:47** Deliverables: **CHECKER.md** (what the checker accepts/rejects and why, plus every instruction version with its measured effect), **ATTEMPTS.md + attempts_all.csv** (`scripts/attempt_log.py`: 440 runs, 1636 attempts, each run's round-by-round reward and bucket, and the agent's claim).
 - **16:49** refresh_deliverables (midrun): snapshot `runs/1649_midrun/`; regenerated FAILURES.md, TOKENS.md, ATTEMPTS.md, attempts_all.csv, RESULTS_AUTO.md.
 - **17:07** refresh_deliverables (final): snapshot `runs/1707_final/`; regenerated FAILURES.md, TOKENS.md, ATTEMPTS.md, attempts_all.csv, RESULTS_AUTO.md.
+- **17:08** **DATA CUT-OFF. Final results.**
+  - **Stage B, final agent C10** [sim, n=5]: **L1–L7 5/5, L8 0/5**. L1 pooled over all final-family runs: **17/20** (C11 on seat-72 2/5).
+  - **C11 (v10) REVERTED.** L8 unchanged at 0.30. L1 fell: one run was derailed by a v10 lint item; two diverged from round 1 on a different seat (server/batching variance), so L1's 5/5 is not seat-robust.
+  - **Stage A final** (`--v2 --v3 --v4-smart`): **9/10** (A5 unsolved).
+  - **Calibration**: 38 claims, Brier **0.030**; every agent claim at 0.95 passes held-out (32/32).
+  - FAILURES.md now separates the two ladders (L1–L8 vs A1–A10).

@@ -25,7 +25,8 @@ os.makedirs("runs", exist_ok=True)
 
 
 def running():
-    out = subprocess.run(["pgrep", "-f", "python -u agent[.]py"], capture_output=True, text=True)
+    # ^python: count the interpreter only, not the "sh -c" wrapper that Popen(shell=True) adds
+    out = subprocess.run(["pgrep", "-f", "^python -u agent[.]py"], capture_output=True, text=True)
     return len([l for l in out.stdout.split() if l.strip()])
 
 

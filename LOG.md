@@ -82,3 +82,9 @@ Every decision, run and dead end, written as it happens.
 - **12:50** **Race condition found and fixed**: agent.grade() wrote every candidate to `/tmp/_agent_level{N}.py`, and runq can run two jobs of the same level at once. Now per-pid. The E1/E2 code still has the race (frozen), so E1 attempts will be RE-GRADED offline as a contamination check before E1 is decided.
 - **12:50** **C1 = E1 + `--v2-verdicts`** (one change against E1), queued AHEAD of E2 because it targets the measured bottleneck. It runs from `/workspace/combo` (new code: v2, per-pid temp files, confidence claims) via runq's new `@dir` prefix, while E2 still runs the frozen experiment code. Queue order now: E1 tail → C1 (20) → E2 retrieve (20) → Stage A Qwen (50).
 - **12:50** **Contamination check (regrade.py) on E1 r0–r3: 54 attempts re-graded from their own code, 0 mismatches** → the /tmp race did not fire, and the E1 numbers stand. Also: those 54 attempts contain only **8 distinct kernels**. On the deterministic server an unchanged prompt reproduces the same code across runs, so prompt content is the only lever.
+- **12:56** **E1 `--skeleton` decided: ADOPT** [sim, n=5/level, snapshot `runs/1256_E1_skeleton/`, regrade clean].
+  - L2: 0/5 → **5/5**, all on round 1.
+  - L4: mean 0.36 → **0.62**, every run passing the single-tile shape.
+  - L1 and L3: unchanged at 0.30.
+
+  Unlike upstream's reverted "chunks of 128" example, this structural template made nothing worse. **Honest caveat**: the L2 skeleton's TODO ("column j*F1+i holds in_tile column i*F2+j") restates the index mapping derivable from the reference docstring, so the L2 gain is a strong hint more than model reasoning. The L3/L4 walls are now ONE line, the swapped lhsT slice. C1 (+ `--v2-verdicts`) is already running against it.

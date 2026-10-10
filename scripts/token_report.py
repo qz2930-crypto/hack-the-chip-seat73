@@ -62,8 +62,8 @@ def table(ps):
         ratio = 1.0
     groups = collections.defaultdict(list)
     for p in ps:
-        groups[(p.get("tag") or "?", p["level"])].append(p)
-    print("| tag | level | prompts | " + " | ".join(SECTIONS) + " | total | % of 8192 | max |")
+        groups[((p.get("tag") or "?").split("_L")[0], p["level"])].append(p)
+    print("| experiment | level | prompts | " + " | ".join(SECTIONS) + " | total | % of 8192 | max |")
     print("|---|---|---|" + "---|" * (len(SECTIONS) + 3))
     for (tag, lv), g in sorted(groups.items()):
         means = [sum(p["prompt_sections"].get(s, 0) for p in g) / len(g) * ratio for s in SECTIONS]

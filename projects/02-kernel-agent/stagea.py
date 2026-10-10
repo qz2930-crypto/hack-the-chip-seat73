@@ -65,6 +65,54 @@ LOOP_FOR = {
 }
 
 
+# ---------------------------------------------------------------- v2 (A_qwen2)
+#
+# From the first Stage-A runs on local Qwen3-8B (LOG 14:3x), two verdicts that were true but not
+# instructions:
+#   * A3: the model appends one row-max PER COLUMN TILE, so a 513-column input returns 258 values for
+#     129 rows; v1 said "check the output-size formula".
+#   * A4/A5/A8: the banned reduction comes straight back; "replace sum with a running sum" is a
+#     description, not code.
+V2 = False
+
+REDUCE_SNIPPET = {
+    "sum": ("acc = np.zeros(R, dtype=np.float64)\n"
+            "for c0 in range(0, C, 512):\n"
+            "    c1 = min(c0 + 512, C)\n"
+            "    for c in range(c0, c1):\n"
+            "        acc[r0:r1] += x[r0:r1, c]"),
+    "max": ("acc = np.full(R, -np.inf)\n"
+            "for c0 in range(0, C, 512):\n"
+            "    c1 = min(c0 + 512, C)\n"
+            "    for c in range(c0, c1):\n"
+            "        acc[r0:r1] = np.maximum(acc[r0:r1], x[r0:r1, c])"),
+}
+REDUCE_SNIPPET["amax"] = REDUCE_SNIPPET["max"]
+REDUCE_SNIPPET["mean"] = REDUCE_SNIPPET["sum"] + "\n# then divide acc by C"
+
+
+def v2_instruct(bucket, feedback, src, level):
+    """A better instruction, or None to keep v1's."""
+    if bucket == "wrong_output_shape":
+        m = re.search(r"returned \((\d+),?\)?.*?reference is \((\d+),?\)?", feedback)
+        if m and int(m.group(2)) and int(m.group(1)) % int(m.group(2)) == 0 \
+                and int(m.group(1)) > int(m.group(2)):
+            return ("wrong_output_shape", feedback.split(" Change only")[0] +
+                    " You produce one result PER COLUMN TILE and concatenate them. A row reduction "
+                    "must COMBINE all column tiles of a row into ONE value: allocate the output once "
+                    "(one entry per row) before the column loop, and inside every column tile merge "
+                    "into the same entries (np.maximum for max, += for sum). Do not append per tile.")
+    if bucket == "rule_framework_call":
+        m = re.search(r"(?:calls banned|method) `\.?(\w+)", feedback)
+        name = m.group(1).split(".")[-1] if m else ""
+        if name in REDUCE_SNIPPET:
+            return ("rule_framework_call", feedback.split(" Replace")[0] +
+                    f". Delete that `{name}` call and compute it with this loop instead (R rows, C "
+                    f"columns, r0:r1 the current row tile):\n{REDUCE_SNIPPET[name]}\n"
+                    f"Keep everything else identical.")
+    return None
+
+
 # ---------------------------------------------------------------- verdict -> instruction
 
 def instruct(kind, detail, level):
@@ -315,6 +363,10 @@ def solve(a, cli, level, log, run):
         m = CODE_BLOCK.findall(v["content"])
         src = max(m, key=len).strip() if m else ""
         reward, parts, bucket, fb, frac = grade(src, level)
+        if V2:
+            better = v2_instruct(bucket, fb, src, level)
+            if better:
+                bucket, fb = better
         best = max(best, reward)
         sec = {"task": 0, "code": 0, "error": 0, "ledger": 0}
         if kind == "first":
@@ -391,7 +443,12 @@ def main():
     ap.add_argument("--tag", default="A")
     ap.add_argument("--log", default="")
     ap.add_argument("--offline", action="store_true")
+    ap.add_argument("--v2", action="store_true",
+                    help="v2 instructions: combine column tiles in a reduction; give the exact loop "
+                         "that replaces a banned reduction")
     a = ap.parse_args()
+    global V2
+    V2 = a.v2
     os.makedirs("runs", exist_ok=True)
     cli = None if a.offline else Client(a)
     levels = parse_levels(a.levels)

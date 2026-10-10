@@ -121,3 +121,9 @@ Every decision, run and dead end, written as it happens.
   - All four teammate servers had the IDENTICAL vLLM config (TP 2, max-model-len 8192, max-num-seqs 4, 1024 blocks). seat-70 had no server, so one was started.
   - Our code was copied byte-for-byte from seat-73 into a separate `/workspace/s73/` on each seat (md5 of agent.py in the exp dir and combo6 checked equal); the teammates' `/workspace/projects` was not touched.
   - Each experiment GROUP runs on ONE seat, so comparisons inside a group are same-server: **seat-73** c5 tail + C7; **seat-70** L8 pair (c6 vs c6ctl); **seat-71** Stage A L1–5; **seat-72** Stage A L6–10; **seat-74** E2 (`--retrieve`, brought back). `scripts/pullall5.sh` mirrors all five.
+- **14:33** **Stage A first results** [CPU numpy harness, local Qwen3-8B, n=1 each so far]. A1 solved on round 1. **A2 solved on round 2** (round 1 used banned np.sum → v1 "replace the sum call with a running sum…" → solved), which is the CHALLENGE doc's own verdict→instruction pattern reproduced. A3 0.94 (28/32), A7 0.90, A9 0.90; A4/A5/A8 stuck on banned reductions.
+  - Two v1 verdicts that are true but not instructions:
+    - **A3**: the model appends one row-max PER COLUMN TILE → "WRONG SHAPE (258,) vs (129,) … check the output-size formula".
+    - **A4**: `np.sum` comes back after "replace with a running sum".
+  - **stagea `--v2`**: (1) when the returned size is an integer multiple of the reference → "you produce one result per column tile … COMBINE all column tiles into one value per row; do not append per tile"; (2) for a banned sum/max/mean, give the exact replacement loop. It fires on both real failures.
+  - Deployed to `/workspace/s73/expA2` on seats 71/72 (separate dir, v1 runs untouched; md5 checked) and queued **A2_qwen** (10 levels × 5) after the v1 runs.

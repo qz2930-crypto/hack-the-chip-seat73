@@ -187,3 +187,10 @@ Every decision, run and dead end, written as it happens.
   - **Calibration**: 38 claims, Brier **0.030**; every agent claim at 0.95 passes held-out (32/32).
   - FAILURES.md now separates the two ladders (L1–L8 vs A1–A10).
 - **18:01** Presentation: an English slide deck (9 slides) built around the **two-loop** story. Inner loop: code → agent → checker → instruction. Outer loop: stall → **Claude audits from outside the code** → prove the fix by hand → A/B on 5 seats → ship a flag. The demo is a 43 s video (`demo/demo.mp4`, rendered from the real logs by `scripts/make_demo_video.py`) placed right after the cover. The deck states the regrade coverage as 354 decision attempts, not all 1,636.
+- **18:52** **Consistency audit of the talk vs the data, then fixes.**
+  - (1) Results slide said "2–4 rounds"; C10 is **1–4** (L2 solves on round 1).
+  - (2) "1,636 attempts" was stale: **1,941** after the final runs.
+  - (3) "32/32 claims at 0.95" included one reference kernel: **31/31 agent claims** (+1 reference).
+  - (4) A temporary `runs/live/_story.jsonl` (copies of 3 runs, made for the token chart) had leaked into the generated deliverables and three snapshots. It was moved to `docs/token_story.jsonl`, removed from the snapshots, and ATTEMPTS/FAILURES/TOKENS/RESULTS_AUTO/CALIBRATION were regenerated: 1,941 attempts, 516 runs, Brier 0.030 unchanged (calibration dedupes by code).
+  - (5) Softened overstatements: "354 attempts behind **every** decision" → "the main decisions"; "every outer-loop turn proved by hand" → "checked before use (a hand-written kernel, or zero hits on correct kernels)"; "three changes measured useless" → "two measured useless or worse, one shown never to fire" (E3 was dropped on a counterfactual, not run); demo screen 1 "upstream checker" → "upstream's message (same skeleton, only the message differs)" (that comparison is E1 vs C1, and the video was re-rendered); "first time" → "upstream had none"; "all numbers [sim]" → "NKI numbers [sim] … Stage A on CPU".
+  - Applied to the deck, SCRIPT.md, DEMO.md, NOTE.md, CHECKER.md, RESULTS.md.

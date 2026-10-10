@@ -49,7 +49,7 @@ def screen1():
     print(f"  {D}lhsT has shape [K, M] -- the axes are swapped. On square tiles this does NOT crash.{X}\n")
     up_fb = up["feedback"].split(" On ", 1)[-1]
     up_fb = re.sub(r"at index .*?\n", "", up_fb)
-    print(f"  {Y}upstream checker:{X}")
+    print(f"  {Y}upstream's message{X} {D}(same skeleton -- only the message differs):{X}")
     print(wrap(up_fb.replace("\n", " ")[:330]))
     print(f"  {D}-> it rewrote the same line, 5 runs of 5, 0 solves{X}\n")
     cause = ours[0]["feedback"][ours[0]["feedback"].index("CAUSE"):]

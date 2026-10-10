@@ -13,11 +13,11 @@ The same English text is in each slide's speaker notes.
 ---
 
 ### Slide 2 · Demo video · 50 s (talk over the video)
-**Say:** "Level 4. The model swapped the axes of one slice — on square tiles that doesn't crash, it silently computes the wrong matrix. The original checker says 'most elements are wrong, check the layout'. True, and useless: zero of five. Ours reads the code and names the line and the fix — next round, solved, five of five. *(code appears)* That's all it is: about fifteen lines. *(A/B appears)* Level 5 is about memory traffic. Same model, same chip, alternating runs: upstream's hint, zero of five; our one sentence, five of five. *(scoreboard)* Baseline: nothing. Final agent: seven of eight levels."
+**Say:** "Level 4. The model swapped the axes of one slice — on square tiles that doesn't crash, it silently computes the wrong matrix. With the same skeleton, upstream's message says 'most elements are wrong, check the layout'. True, and useless: zero of five. Ours reads the code and names the line and the fix — next round, solved, five of five. *(code appears)* That's all it is: about fifteen lines. *(A/B appears)* Level 5 is about memory traffic. Same model, same chip, alternating runs: upstream's hint, zero of five; our one sentence, five of five. *(scoreboard)* Baseline: nothing. Final agent: seven of eight levels."
 
 **中文：**
 - 第 4 级：模型把一个切片的两个轴写反了。方块形状下它**不会报错，只会悄悄算错**。
-- 原来的检查器说"大部分元素错了，检查一下布局"，说得对但没用，5 次 0 解出。
+- 在同样的骨架下，上游原版的提示说"大部分元素错了，检查一下布局"，说得对但没用，5 次 0 解出。
 - 我们的检查器**读模型的代码**，直接点名哪一行、怎么改，下一轮就解出，5 次全中。
 - （出现代码时）实现就这么十几行。
 - （出现对照实验时）第 5 级比的是从内存搬了多少数据。同一张卡交替跑：上游的提示 0/5，我们的一句话 5/5。
@@ -33,23 +33,23 @@ The same English text is in each slide's speaker notes.
 ---
 
 ### Slide 4 · Two loops (the flowchart) · 25 s — **the key slide**
-**Say:** "So we built two loops. The inner loop: the agent writes a kernel on Trainium, the checker scores it and turns the verdict into one instruction, and the agent tries again. The outer loop is our innovation: when the inner loop stalls, Claude audits from outside the code — the agent's repair logic against what the level actually requires — proposes a new instruction. We prove it by hand, A/B test it on five chips, and ship it as one flag."
+**Say:** "So we built two loops. The inner loop: the agent writes a kernel on Trainium, the checker scores it and turns the verdict into one instruction, and the agent tries again. The outer loop is our innovation: when the inner loop stalls, Claude audits from outside the code — the agent's repair logic against what the level actually requires — proposes a new instruction. We check it before use, A/B test it on our Trainium seats, and ship it as one flag."
 
 **中文（指着图讲）：**
 - **蓝色的内循环**：agent 写 kernel → 检查器打分 → 把"错在哪"翻译成"改哪里" → agent 再试。这是比赛本来就有的。
 - **橙色的外循环是我们的创新**：内循环卡住时（一直 0 分、反复同样的错、或者变差了），让 **Claude 站在代码之外当审核员**，对照"agent 是怎么修的"和"这一级真正要什么"，找出 agent 的修复思路哪里偏了，提出新的指令。
-- 我们先**手工验证**这个指令真的能做出来，再在 **5 张芯片上做对照实验**，有效才作为一个新开关上线，然后回到内循环。
+- 我们先**验证**这个指令可行（手写一个能通过的 kernel，或确认它不会误伤任何正确代码），再在**芯片上做对照实验**，有效才作为一个新开关上线，然后回到内循环。
 
 ---
 
 ### Slide 5 · Claude as auditor · 20 s
-**Say:** "Every stall became one flag. Swapped axes: zero to five of five. Twice the cause was the upstream prompt itself — changing one sentence fixed level 6. The chip rejected code the simulator accepts, so that became a checker rule. And three changes were measured useless and reverted."
+**Say:** "Every stall became one flag. Swapped axes: zero to five of five. Twice the cause was the upstream prompt itself — changing one sentence fixed level 6. The chip rejected code the simulator accepts, so that became a checker rule. And three changes were dropped: two measured useless or worse, one shown never to fire."
 
 **中文：** 每一次卡住都变成了一个新开关：
 - 轴写反了 → 从 0/5 到 5/5；
 - 有两次病根是**比赛方自己的提示词**，改一句话就修好了第 6 级；
 - 真芯片拒绝了模拟器能通过的写法，我们把这条变成了检查规则；
-- 也有 3 个改动实测没用，已经撤回。
+- 也有 3 个改动被放弃：两个实测没用或更差，一个经核查根本不会被触发。
 
 ---
 

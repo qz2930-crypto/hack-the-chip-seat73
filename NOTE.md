@@ -36,14 +36,14 @@ copied its inputs, the model invented `tile.fill()` and `nisa.psum_zero` chasing
 * **Held-out hostile cases** (`heldout.py`: ragged K=96 M=200 N=700, M=1, prime K=131, ×1e4, constant rows) [sim]:
   every agent-written kernel it claimed solved passes all of them; **every official AWS tutorial matmul kernel
   (L4–L7) fails them**, and the verbatim L6 tutorial kernel returns *silently wrong* numbers at K=131.
-* **Calibration** (`CALIBRATION.md`): the agent attaches a confidence to every SOLVED claim. All **32** agent claims
-  at 0.95 pass held-out; shape-asserting references at 0.38 pass 1 of 5. **Brier 0.030** (n=38 incl. references).
+* **Calibration** (`CALIBRATION.md`): the agent attaches a confidence to every SOLVED claim. All **31** agent claims
+  at 0.95 pass held-out (one reference kernel also sits at 0.95 and passes); shape-asserting references at 0.38 pass 1 of 5. **Brier 0.030** (n=38 incl. references).
 * **[device]** (seat-70, logical core 2): agent-written **L3, L4, L5** kernels and the AWS reference L4 run on the
   Trainium2 chip and match NumPy (max error/RMS 1e-6). The agent's **first L7 kernel was rejected by the device
   compiler** (a list comprehension the simulator accepts), so we added that as a static rule (`--device-rules`);
   the C10 L7 kernels use plain loops. **No kernel latency is claimed**: per-call wall clock (~1.6 s) is host-bound,
   and device-side timing was not reached within its time box.
-* **Every run was re-graded from its own code** (`regrade.py`): 0 mismatches. That check found two of our own
+* **The 354 attempts behind the main decisions were re-graded from their own code** (`regrade.py`): 0 mismatches. That check found two of our own
   tool bugs (bytecode-cache staleness, missing flags), both fixed and logged.
 * **Repeats are not independent**: the server decodes deterministically, so repeats of one prompt often follow
   the same path (Stage A: always byte-identical, effectively **n=1** per level). Stage B baseline repeats did

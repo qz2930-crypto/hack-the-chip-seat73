@@ -82,5 +82,5 @@ Rules for every message, each one learned from a measurement in LOG.md:
 | `--retrieve` | AWS doc excerpt per failure bucket | **no effect**, reverted |
 | `--mech` | AST fixes | dropped: 0 of 145 attempts needed it |
 
-Verification of the checker itself: `regrade.py` re-grades every logged attempt from its own code. All
-experiments: 0 mismatches. Two bugs found that way (bytecode-cache staleness, missing flags) are fixed and logged.
+Verification of the checker itself: `regrade.py` re-grades logged attempts from their own code. The 354 attempts
+behind the main decisions (E1, C1, C2, the L5 pair, c5 and its controls, C10): 0 mismatches. Two bugs found that way (bytecode-cache staleness, missing flags) are fixed and logged.

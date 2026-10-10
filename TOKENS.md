@@ -1,6 +1,6 @@
 # TOKENS — input-token instrumentation
 
-Calibration: the server counted **1.22x** the chars/4 estimate over 1815 prompts (sections below are scaled by this factor). The chat template adds a fixed overhead the sections cannot see.
+Calibration: the server counted **1.22x** the chars/4 estimate over 1808 prompts (sections below are scaled by this factor). The chat template adds a fixed overhead the sections cannot see.
 
 | experiment | level | prompts | task | api | skeleton | docs | code | error | ledger | total | % of 8192 | max |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -11,7 +11,7 @@ Calibration: the server counted **1.22x** the chars/4 estimate over 1815 prompts
 | A2_qwen | 5 | 30 | 38 | 0 | 0 | 0 | 252 | 125 | 35 | 450 | 5% | 793 |
 | A2_qwen | 6 | 15 | 40 | 0 | 0 | 0 | 158 | 36 | 20 | 254 | 3% | 378 |
 | A2_qwen | 7 | 30 | 41 | 0 | 0 | 0 | 137 | 54 | 0 | 231 | 3% | 419 |
-| A2_qwen | 8 | 25 | 46 | 0 | 0 | 0 | 422 | 88 | 32 | 589 | 7% | 903 |
+| A2_qwen | 8 | 25 | 46 | 0 | 0 | 0 | 423 | 88 | 32 | 589 | 7% | 903 |
 | A2_qwen | 9 | 20 | 69 | 0 | 0 | 0 | 311 | 69 | 28 | 477 | 6% | 681 |
 | A2_qwen | 10 | 10 | 113 | 0 | 0 | 0 | 118 | 108 | 0 | 339 | 4% | 474 |
 | A3_qwen | 1 | 5 | 76 | 0 | 0 | 0 | 0 | 0 | 0 | 76 | 1% | 76 |
@@ -83,14 +83,14 @@ Calibration: the server counted **1.22x** the chars/4 estimate over 1815 prompts
 | c11 | 5 | 20 | 116 | 121 | 99 | 0 | 450 | 172 | 0 | 958 | 12% | 1156 |
 | c11 | 6 | 19 | 120 | 127 | 105 | 0 | 425 | 158 | 0 | 936 | 11% | 1162 |
 | c11 | 7 | 15 | 135 | 161 | 133 | 0 | 388 | 148 | 0 | 966 | 12% | 1161 |
-| c11 | 8 | 38 | 169 | 0 | 64 | 0 | 797 | 63 | 25 | 1118 | 14% | 1396 |
+| c11 | 8 | 38 | 169 | 0 | 64 | 0 | 798 | 63 | 25 | 1118 | 14% | 1396 |
 | c2 | 1 | 10 | 144 | 241 | 135 | 0 | 205 | 86 | 0 | 812 | 10% | 980 |
 | c2 | 2 | 5 | 334 | 482 | 256 | 0 | 0 | 0 | 0 | 1073 | 13% | 1073 |
 | c2 | 3 | 10 | 168 | 241 | 198 | 0 | 276 | 61 | 0 | 944 | 12% | 1151 |
 | c2 | 4 | 10 | 166 | 241 | 198 | 0 | 276 | 93 | 0 | 974 | 12% | 1150 |
 | c2L5 | 5 | 30 | 98 | 80 | 66 | 0 | 451 | 96 | 57 | 848 | 10% | 1156 |
 | c2hi | 6 | 26 | 105 | 93 | 77 | 0 | 444 | 100 | 46 | 864 | 11% | 1162 |
-| c2hi | 7 | 37 | 93 | 65 | 54 | 0 | 485 | 66 | 43 | 805 | 10% | 1161 |
+| c2hi | 7 | 37 | 93 | 65 | 54 | 0 | 485 | 66 | 43 | 806 | 10% | 1161 |
 | c3L5 | 5 | 15 | 133 | 161 | 133 | 0 | 369 | 137 | 0 | 933 | 11% | 1156 |
 | c5 | 5 | 15 | 133 | 161 | 133 | 0 | 369 | 159 | 0 | 955 | 12% | 1156 |
 | c5 | 6 | 34 | 95 | 71 | 59 | 0 | 503 | 103 | 40 | 872 | 11% | 1162 |
@@ -103,7 +103,7 @@ Calibration: the server counted **1.22x** the chars/4 estimate over 1815 prompts
 | c8 | 8 | 39 | 164 | 0 | 55 | 0 | 654 | 46 | 13 | 932 | 11% | 1302 |
 | c8a | 6 | 20 | 117 | 121 | 100 | 0 | 437 | 211 | 0 | 985 | 12% | 1162 |
 | c8b | 6 | 15 | 135 | 161 | 133 | 0 | 372 | 160 | 0 | 962 | 12% | 1162 |
-| c9 | 1 | 14 | 278 | 0 | 97 | 0 | 1488 | 63 | 10 | 1935 | 24% | 3751 |
+| c9 | 1 | 14 | 278 | 0 | 97 | 0 | 1488 | 63 | 10 | 1935 | 24% | 3752 |
 | c9 | 2 | 5 | 793 | 0 | 256 | 0 | 0 | 0 | 0 | 1050 | 13% | 1050 |
 | c9 | 3 | 10 | 168 | 241 | 198 | 0 | 276 | 61 | 0 | 944 | 12% | 1151 |
 | c9 | 4 | 10 | 166 | 241 | 198 | 0 | 276 | 93 | 0 | 974 | 12% | 1150 |
@@ -121,9 +121,6 @@ Calibration: the server counted **1.22x** the chars/4 estimate over 1815 prompts
 | skel | 2 | 5 | 334 | 482 | 256 | 0 | 0 | 0 | 0 | 1073 | 13% | 1073 |
 | skel | 3 | 20 | 115 | 121 | 99 | 0 | 409 | 122 | 35 | 900 | 11% | 1151 |
 | skel | 4 | 20 | 113 | 121 | 99 | 0 | 415 | 73 | 35 | 855 | 10% | 1150 |
-| story | 1 | 2 | 144 | 241 | 135 | 0 | 199 | 86 | 0 | 805 | 10% | 980 |
-| story | 4 | 2 | 166 | 241 | 198 | 0 | 276 | 93 | 0 | 974 | 12% | 1150 |
-| story | 5 | 3 | 133 | 161 | 133 | 0 | 369 | 137 | 0 | 933 | 11% | 1156 |
 
-Prompt kinds: {'first': 519, 'repair': 1109, 'repair+ledger': 187}.
-Completion tokens: mean 499, max 2500 (n=1815). Truncated answers (finish=length): 29.
+Prompt kinds: {'first': 516, 'repair': 1105, 'repair+ledger': 187}.
+Completion tokens: mean 498, max 2500 (n=1808). Truncated answers (finish=length): 29.

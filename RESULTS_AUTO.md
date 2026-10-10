@@ -1,4 +1,4 @@
-# RESULTS_AUTO — every experiment's per-level rate, regenerated from all logs (17:07 ET)
+# RESULTS_AUTO — every experiment's per-level rate, regenerated from all logs (18:50 ET)
 
 ```
 
@@ -201,10 +201,4 @@
   L3: solved 0/5, mean 0.30, all=[0.3, 0.3, 0.3, 0.3, 0.3]   rounds-to-solve=-   rounds used=[4, 4, 4, 4, 4]
   L4: solved 0/5, mean 0.62, all=[0.62, 0.62, 0.62, 0.62, 0.62]   rounds-to-solve=-   rounds used=[4, 4, 4, 4, 4]
   row: | solved 0/5, mean 0.30, all=[0.3, 0.3, 0.3, 0.3, 0.3] | solved 5/5, mean 1.00, all=[1.0, 1.0, 1.0, 1.0, 1.0] | solved 0/5, mean 0.30, all=[0.3, 0.3, 0.3, 0.3, 0.3] | solved 0/5, mean 0.62, all=[0.62, 0.62, 0.62, 0.62, 0.62] |
-
-== story
-  L1: solved 1/1, mean 1.00, all=[1.0]   rounds-to-solve=[2]   rounds used=[2]
-  L4: solved 1/1, mean 1.00, all=[1.0]   rounds-to-solve=[2]   rounds used=[2]
-  L5: solved 1/1, mean 1.00, all=[1.0]   rounds-to-solve=[3]   rounds used=[3]
-  row: | solved 1/1, mean 1.00, all=[1.0] | solved 1/1, mean 1.00, all=[1.0] | solved 1/1, mean 1.00, all=[1.0] |
 ```

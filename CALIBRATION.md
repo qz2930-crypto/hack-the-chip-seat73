@@ -6,19 +6,20 @@ Every kernel the agent claimed SOLVED (public reward 1.0), re-run on held-out ho
 
 | level | source | confidence | held-out | why that confidence |
 |---|---|---|---|---|
+| L1 | c10_L1_r0 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L1 | c10_L1_r3 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L1 | c2_L1_r1 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L1 | c9_L1_r1 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L1 | c9_L1_r2 | 0.95 | PASS | all public shapes pass; remainder handling present |
-| L1 | story | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L2 | c10_L2_r0 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L2 | c9_L2_r0 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L3 | c10_L3_r0 | 0.95 | PASS | all public shapes pass; remainder handling present |
-| L4 | story | 0.95 | PASS | all public shapes pass; remainder handling present |
+| L4 | c10_L4_r0 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L5 | c10_L5_r0 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L5 | c10_L5_r1 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L5 | c10_L5_r4 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L5 | c11_L5_r0 | 0.95 | PASS | all public shapes pass; remainder handling present |
+| L5 | c3L5_L5_r0 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L5 | c3L5_L5_r1 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L5 | c5_L5_r0 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L5 | c5_L5_r1 | 0.95 | PASS | all public shapes pass; remainder handling present |
@@ -26,7 +27,6 @@ Every kernel the agent claimed SOLVED (public reward 1.0), re-run on held-out ho
 | L5 | c7_L5_r2 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L5 | c9_L5_r1 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L5 | c9_L5_r4 | 0.95 | PASS | all public shapes pass; remainder handling present |
-| L5 | story | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L6 | c10_L6_r0 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L6 | c10_L6_r2 | 0.95 | PASS | all public shapes pass; remainder handling present |
 | L6 | c10_L6_r3 | 0.95 | PASS | all public shapes pass; remainder handling present |

@@ -1,5 +1,7 @@
 # DEMO + PRESENTATION — 3 minutes total
 
+> The current, timed 3-minute script (English + 中文) is **`SCRIPT.md`**; the slides' speaker notes match it.
+
 **Part A: live demo, under 1 minute.** Show our code and what it changed.
 **Part B: presentation, 2 minutes.** The idea, the evidence, the honesty.
 
@@ -13,7 +15,7 @@ at `def code_hint` (search for it). Font size large. Every number is from our ow
 | time | do this | say this (English) | 中文意思 |
 |---|---|---|---|
 | 0:00 | run `python scripts/demo.py`, screen 1 appears | "Level 4, tiled matmul. The model swapped the axes of one slice: `lhsT[m, k]` instead of `lhsT[k, m]`. On square tiles that doesn't crash. It silently computes the wrong matrix." | 模型把一个切片的两个轴写反了，方块形状下不会报错，只会悄悄算错 |
-| 0:12 | point at the yellow text | "The original checker says: most elements are wrong, check the operand layout. True, and useless: the model never fixed it. Zero of five." | 原检查器说"大部分元素错了"，对但没用，5 次 0 解出 |
+| 0:12 | point at the yellow text | "With the same skeleton, upstream's message says: most elements are wrong, check the operand layout. True, and useless: the model never fixed it. Zero of five." | 原检查器说"大部分元素错了"，对但没用，5 次 0 解出 |
 | 0:20 | point at the green text | "Ours reads the code and names the line and the fix. Next round: solved. Five of five." | 我们的检查器读代码，点名哪一行、怎么改，下一轮就解出，5/5 |
 | 0:27 | switch to the editor, `def code_hint` in `verdicts.py` | "This is all it is: about fifteen lines that find the swapped slice in the model's own code." | 实现就这么十几行：在模型自己的代码里找出写反的切片 |
 | 0:35 | back to terminal, Enter → screen 2 | "Level 5 is about bytes, not correctness. Same model, same seat, alternating runs. Upstream's hint: zero of five. Our one sentence, 'this load doesn't depend on n, move it out': five of five." | 第 5 级比的是搬运量。同一张卡交替跑：上游提示 0/5，我们一句话 5/5 |
@@ -45,8 +47,8 @@ If the terminal fails, `python scripts/demo.py --fast` prints everything at once
 *中文：三类改动。一，检查器读代码，点名要改的那一行。二，有两次问题出在上游自己的提示上，改一句话就修好了第 6 级。三，打通真芯片：第 3、4、5 级的 kernel 在 Trainium 上运行正确；第 7 级最初的版本在芯片上编译不过，我们把这条变成了检查规则。*
 
 ### 1:05–1:40 · How we know it's real *（为什么可信）*
-> "Every number is a rate over five runs, and every change was A/B tested. Two of our own ideas made things
-> worse and were reverted. We also built held-out tests the agent never sees: ragged shapes, prime sizes,
+> "Every number is a rate over five runs, and every change was A/B tested. Three changes were dropped: two
+> measured useless or worse, one shown never to fire. We also built held-out tests the agent never sees: ragged shapes, prime sizes,
 > huge values. Every kernel our agent claimed at 0.95 confidence passed them. AWS's own tutorial matmul kernels
 > failed them, and one returns silently wrong numbers."
 

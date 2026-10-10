@@ -308,10 +308,14 @@ def tolerance(want, n_acc=1, rtol=None):
     Why the safety factor c = 8. sqrt(n)*eps32 is a one-sigma figure; the max over up to
     ~10^5 output elements sits several sigma out (~4.5 sigma for 1e5 Gaussian samples), and
     the ops are not perfectly conditioned (layernorm amplifies the error in the mean by
-    |mean|/std, which the 'large' cases make ~10). 8 covers both. Measured: correct
-    float32 tiled kernels with sequential (worst-order) accumulation use at most about a
-    quarter of this budget on the ladder's cases. A floor of 1e-5 (= 84 eps32) keeps n_acc=1
-    levels from demanding bit-exactness from fused or reassociated arithmetic.
+    |mean|/std, which the 'large' cases make ~10). 8 covers both. Measured with correct
+    float32 tiled kernels using sequential (worst-order) float32 accumulation: levels 2, 4,
+    5, 7 use <= 6% of the budget; level 8 on the large-mean cases uses up to ~67% (30 seeds),
+    because of that |mean|/std amplification. The level-8 trap (one-pass E[x^2]-E[x]^2
+    variance in float32) lands 2.5-3x OVER the budget on the same cases, so c cannot go much
+    above ~10 without letting the trap through, nor much below ~6 without false-failing
+    correct layernorms. A floor of 1e-5 (= 84 eps32) keeps n_acc=1 levels from demanding
+    bit-exactness from fused or reassociated arithmetic.
 
     Why atol = rtol * RMS(want). A purely relative test divides by |want|, so an output
     that should be ~0 (a layernorm value near the mean, a matmul entry that cancels, a
@@ -458,8 +462,13 @@ def _pattern_line(bad):
                 f"{span_c[0]}..{span_c[1]} of {C}, across {nr} of {R} rows. One column tile or "
                 f"one loop range is wrong; find the iteration that covers columns "
                 f"{span_c[0]}..{span_c[1]}.")
+    if nr == R and one_col:
+        return (f"PATTERN ALL-ROWS: every output row is wrong. The output is 1-D (a reduction "
+                f"over the columns), so a column-tile bug cannot be seen by position: every row "
+                f"wrong means the reduction itself is wrong, often a column tile (the partial "
+                f"one first) dropped, double-counted, or started from the wrong identity.")
     if nr == R:
-        return (f"PATTERN ALL-ROWS: every {rw[:-1]} has wrong elements ({bad.mean():.1%} of all "
+        return (f"PATTERN ALL-ROWS: every row has wrong elements ({bad.mean():.1%} of all "
                 f"elements). This is the core arithmetic, not an edge or a loop bound.")
     return (f"PATTERN SCATTERED: {nr} of {R} {rw} and {nc} of {C} columns have wrong elements "
             f"with no block or stride structure. Suspect value-dependent arithmetic (overflow, "
@@ -690,6 +699,35 @@ def kernel(x):
     return out
 """
 
+# Correct float32 tiled softmax backward: dx = p * (g - <p, g>), p = softmax(x).
+_GOOD_SOFTMAX_BWD = """
+import numpy as np
+def kernel(x, g):
+    R, C = x.shape
+    out = np.empty(x.shape, np.float32)
+    for r0 in range(0, R, 128):
+        t, gt = x[r0:r0+128], g[r0:r0+128]
+        m = np.full(t.shape[0], -np.inf, np.float32)
+        for c0 in range(0, C, 512):
+            u = t[:, c0:c0+512]
+            for j in range(u.shape[1]):
+                m = np.maximum(m, u[:, j])
+        s = np.zeros(t.shape[0], np.float32)
+        for c0 in range(0, C, 512):
+            e = np.exp(t[:, c0:c0+512] - m[:, None])
+            for j in range(e.shape[1]):
+                s = s + e[:, j]
+        d = np.zeros(t.shape[0], np.float32)
+        for c0 in range(0, C, 512):
+            pg = np.exp(t[:, c0:c0+512] - m[:, None]) / s[:, None] * gt[:, c0:c0+512]
+            for j in range(pg.shape[1]):
+                d = d + pg[:, j]
+        for c0 in range(0, C, 512):
+            p = np.exp(t[:, c0:c0+512] - m[:, None]) / s[:, None]
+            out[r0:r0+128, c0:c0+512] = p * (gt[:, c0:c0+512] - d[:, None])
+    return out
+"""
+
 # Correct float32 tiled layernorm (two-pass, sequential float32 accumulation).
 _GOOD_8 = """
 import numpy as np
@@ -741,14 +779,6 @@ def _load(src, name):
     return ns["kernel"]
 
 
-def _old_worst_rel(got, want):
-    got = np.asarray(got, np.float64)
-    want = np.asarray(want, np.float64)
-    rel = np.abs(got - want) / np.maximum(np.abs(want), 1e-30)
-    i = int(np.argmax(rel))
-    return float(rel.flat[i]), float(want.flat[i]), float(got.flat[i])
-
-
 def selftest():
     print("Proving the harness catches planted bugs. If any line says UNDETECTED, the")
     print("harness is useless and nothing built on it can be trusted.\n")
@@ -790,24 +820,42 @@ def selftest():
 
     # -- (a) correct kernels whose outputs reach ~0 must pass; the old criterion failed them
     print()
-    x = np.tile(np.linspace(0.0, -100.0, 600, dtype=np.float32), (3, 1))
-    xd = x.astype(np.float64)
+    r_ = _rng(14)
+    x = r_.standard_normal((32, 600)).astype(np.float32)
+    x[::2] = -27.6                       # peaked rows: one dominant logit, tails p ~ 1e-12
+    x[::2, 0] = 0.0
+    g = r_.standard_normal((32, 600)).astype(np.float32)
+    xd, gd = x.astype(np.float64), g.astype(np.float64)
     e = np.exp(xd - xd.max(axis=1, keepdims=True))
-    want = e / e.sum(axis=1, keepdims=True)                 # float64 reference, not downcast
-    got = _load(_GOOD_5, "good5")(x)
-    near = want[(want > 1e-13) & (want < 1e-11)]
-    old_w, old_e, old_g = _old_worst_rel(got, want)
-    old_ok = old_w <= 1e-4
+    p = e / e.sum(axis=1, keepdims=True)
+    want = p * (gd - (p * gd).sum(axis=1, keepdims=True))   # float64 reference
+    got = _load(_GOOD_SOFTMAX_BWD, "good_softmax_bwd")(x, g)
+    near = np.abs(want[(np.abs(want) > 1e-13) & (np.abs(want) < 1e-11)])
+    old_m = describe_mismatch(got, want, _OLD_TOL)
     new_m = describe_mismatch(got, want, None, 600)
     rt, at = tolerance(want, 600)
-    print(f"  (a) correct float32 softmax, outputs {want.max():.2g} down to {want.min():.2g},")
-    print(f"      {near.size} outputs in (1e-13, 1e-11), e.g. {near[0]:.3g}; rtol {rt:.3g}, atol {at:.3g}")
-    print(f"      old relative 1e-4: {'pass' if old_ok else 'FAIL'} (worst rel {old_w:.3g}: "
-          f"expected {old_e:.3g}, got {old_g:.3g})")
+    print(f"  (a) correct float32 softmax-backward p*(g - <p,g>), 32x600, half the rows peaked:")
+    print(f"      {near.size} outputs have |value| in (1e-13, 1e-11), e.g. {near[0]:.3g}; "
+          f"rtol {rt:.3g}, atol {at:.3g}")
+    print(f"      old relative 1e-4: {'pass' if old_m is None else 'FALSE FAIL'}"
+          + ("" if old_m is None else " (" + old_m.splitlines()[1].strip() + "; float32 "
+             "g - <p,g> cancels to 0 where float64 keeps a tiny nonzero value)"))
     print(f"      new mixed:         {'PASS (good)' if new_m is None else 'FAIL'}")
     rc |= 0 if new_m is None else 1
     if new_m:
         print(textwrap.indent(new_m, "      "))
+    # Plain softmax tails are NOT a false fail under either criterion: exp and divide keep
+    # relative precision, so tiny outputs are tiny-and-accurate. Shown for the record.
+    x = np.tile(np.linspace(0.0, -100.0, 600, dtype=np.float32), (3, 1))
+    xd = x.astype(np.float64)
+    e = np.exp(xd - xd.max(axis=1, keepdims=True))
+    want = e / e.sum(axis=1, keepdims=True)
+    got = _load(_GOOD_5, "good5")(x)
+    ok_old = describe_mismatch(got, want, _OLD_TOL) is None
+    ok_new = describe_mismatch(got, want, None, 600) is None
+    print(f"  (a) correct float32 softmax forward, outputs down to {want.min():.2g}: "
+          f"new {'PASS (good)' if ok_new else 'FAIL'}; old {'pass' if ok_old else 'FALSE FAIL'}")
+    rc |= 0 if ok_new else 1
     for n, src, name in ((5, _GOOD_5, "softmax"), (7, _GOOD_7, "matmul"), (8, _GOOD_8, "layernorm")):
         k = _load(src, name)
         new = verify(k, n, stop_early=False)

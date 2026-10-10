@@ -125,6 +125,20 @@ def v2_instruct(bucket, feedback, src, level):
 V3 = False
 
 
+def _acc_name(tree, lineno, name):
+    """v4: the name the model already gave this statistic (mu = xd.mean(...) -> mu), else a fresh one.
+    v3 always used `s`, so a second snippet overwrote the first (A5 max<-sum, A8 mean<-variance)."""
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and n.lineno == lineno and isinstance(n.value, ast.Call) \
+                and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+            return n.targets[0].id
+    used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    k, i = f"{name}_acc", 1
+    while k in used:
+        k, i = f"{name}_acc{i}", i + 1
+    return k
+
+
 def reduce_snippet(src, lineno, name):
     try:
         tree = ast.parse(src)
@@ -146,6 +160,19 @@ def reduce_snippet(src, lineno, name):
         return None
     if re.search(r",\s*\w+\s*\]$", V):
         return f"Remove the `{name}(...)` wrapper and add its argument directly."
+    if V4:
+        a = _acc_name(tree, lineno, name)
+        Vx = f"({V})" if re.search(r"[^\w.\[\]]", V) else V
+        if name in ("max", "amax"):
+            init, step = (f"np.full(({Vx}.shape[0], 1), -np.inf, dtype=np.float32)",
+                          f"{a} = np.maximum({a}, {Vx}[:, c:c+1])")
+        else:
+            init, step = f"np.zeros(({Vx}.shape[0], 1), dtype=np.float32)", f"{a} += {Vx}[:, c:c+1]"
+        tail = f"\n{a} = {a} / x.shape[1]   # divide by the FULL row length" \
+            if name in ("mean", "average") else ""
+        return (f"{a} = {init}\nfor c in range({Vx}.shape[1]):\n    {step}{tail}\n"
+                f"This stores the result in `{a}` with shape (rows, 1); do not reuse the name `{a}` "
+                f"for anything else, and replace ONLY that call.")
     if name in ("max", "amax"):
         init, step = "np.full((V.shape[0], 1), -np.inf, dtype=np.float32)", "s = np.maximum(s, V[:, c:c+1])"
     else:
@@ -153,6 +180,31 @@ def reduce_snippet(src, lineno, name):
     tail = "\ns = s / x.shape[1]   # divide by the FULL row length" if name in ("mean", "average") else ""
     return (f"V = {V}\ns = {init}\nfor c in range(V.shape[1]):\n    {step}{tail}\n"
             f"Use s where the `{name}(..., keepdims=True)` result was; s has shape (rows, 1).")
+
+
+V4 = False
+
+
+def v4_instruct(bucket, fb, src, level):
+    """v4 (A4_qwen), from the A5/A8 analysis (LOG 16:0x). Words, not a pasted kernel: the structure
+    is named, the model writes it."""
+    if level == 5 and (("TILE NOT-EDGE" in fb) or (bucket == "rule_framework_call" and
+                                                   re.search(r"`\.?(sum|max|amax)`", fb))):
+        return "softmax_whole_row", (
+            fb.split(". Replace")[0].split(" Replace that call")[0] + ". " if bucket ==
+            "rule_framework_call" else "") + (
+            "Softmax needs the max and the sum of the WHOLE row, but your max/sum are taken per "
+            "column tile. Restructure each row tile into THREE separate passes over ALL its column "
+            "tiles: pass 1 keeps a running (rows, 1) maximum with np.maximum over every column; pass 2 "
+            "keeps a running (rows, 1) sum of np.exp(x - that maximum) over every column; pass 3 "
+            "writes np.exp(x - maximum) / sum for every column tile. Use no .max/.sum/np.max/np.sum "
+            "anywhere. Keep the tile slicing you already have.")
+    if level in (4, 8) and re.search(r"\((\w+)\s*-\s*(\w+)\)\s*/\s*np\.sqrt\(\s*\2\s*\+", src or ""):
+        return "stat_overwritten", (
+            "The same variable is used as the mean and as the variance, so the mean is overwritten "
+            "before you subtract it. Store the mean in `mu` and the variance in `var`; normalise with "
+            "(x - mu) / np.sqrt(var + eps). Keep everything else identical.")
+    return None
 
 
 def v3_instruct(bucket, fb, src, level):
@@ -441,7 +493,12 @@ def solve(a, cli, level, log, run):
         m = CODE_BLOCK.findall(v["content"])
         src = max(m, key=len).strip() if m else ""
         reward, parts, bucket, fb, frac = grade(src, level)
-        if V3:
+        better = None
+        if V4:
+            better = v4_instruct(bucket, fb, src, level)
+            if better:
+                bucket, fb = better
+        if V3 and not better:
             better = v3_instruct(bucket, fb, src, level)
             if better:
                 bucket, fb = better
@@ -525,6 +582,9 @@ def main():
     ap.add_argument("--tag", default="A")
     ap.add_argument("--log", default="")
     ap.add_argument("--offline", action="store_true")
+    ap.add_argument("--v4", action="store_true",
+                    help="v4: accumulator named after the model's own variable; softmax whole-row "
+                         "three-pass structure (in words); mean/variance overwrite")
     ap.add_argument("--v3", action="store_true",
                     help="v3: snippet built from the model's own banned call; per-level causes")
     ap.add_argument("--v2", action="store_true",
@@ -532,7 +592,8 @@ def main():
                          "that replaces a banned reduction")
     a = ap.parse_args()
     ap_v3 = "--v3" in sys.argv
-    global V2, V3
+    global V2, V3, V4
+    V4 = "--v4" in sys.argv
     V2 = a.v2
     V3 = ap_v3
     os.makedirs("runs", exist_ok=True)

@@ -29,3 +29,17 @@ Every decision, run and dead end, written as it happens.
 - **11:51** **A request with `seed` KILLS the engine.** My probe sent `seed=7`. vLLM-Neuron tried to create a per-request torch Generator on the Neuron device: `NotImplementedError: … implement getNewGenerator … for PrivateUse1` → `EngineDeadError`. The server died and the baseline run died with it (HTTP 500 at level 1, round 4). Crash log saved to `runs/vllm_crash_seed.log`. **Rule: never send `seed` to the local server.** This is worth telling other teams.
 - **11:50** **Generation is slow**: about 50 s per round (270 completion tokens × 4 samples), and a 300-token completion took 68 s while the baseline was running. Node load average was 15 (16 seats share one trn2.48xlarge). Upstream reported ~8 s per round. Budget accordingly: a full `--repeat 5` over levels 1–4 is now about an hour.
 - **11:52** Server restarted. The agent now grades each distinct kernel text once per level, an efficiency change only (grading is deterministic). Baseline will be re-run as soon as the server is READY.
+
+## Phase 2 — levers built (behind flags; defaults == upstream behaviour)
+
+- **11:55** Baseline relaunched as **4 concurrent per-level processes** (`--level N --rounds 8 --samples 1 --context 8192 --repeat 5`, tags `base_L1..4`). Why `--samples 1`: measured on the idle server, 1 request = 300 tok in 21.6 s, 4 concurrent = 54.5 s each (only 1.6× aggregate throughput), and the 4 samples were byte-identical anyway. With 4 processes, the server's 4 slots carry 4 *different* jobs.
+- **12:05** **Skeletons proved completable before any prompt uses them** [sim]. Remainder-safe tiled matmul (`m_sz = min(TM, M - m0)`, one PSUM accumulator outside the K loop): L4 4/4 and L3 1/1. Avgpool via strided-slice accumulation (`tensor_tensor` add over `in_tile[:, di::p, dj::p]`): L1 4/4. Avgpool via per-window `tensor_reduce(axis=(1,2))`: L1 4/4. These hand-written kernels are NOT in any prompt.
+- **12:10** `verdicts.py`: upstream `enrich()` as an explicit table of (bucket, regex, instruction), plus `classify(feedback)` → bucket for every grade stage. Selftest checks 14 raw errors and 9 feedback strings. **Byte-identical to upstream enrich() on all 14 cases**, so swapping it in does not change what the model is told.
+- **12:15** `levers.py` + `agent.py` flags:
+  - `--mech`: AST fixes for entry name, `@nki.jit`, imports.
+  - `--skeleton`: rank-aware template with TODO slots, 209–324 tokens.
+  - `--retrieve`: bucket-keyed excerpts of the vendored AWS corpus, 33–129 tokens each, with source lines cited.
+  - `--empty-terse`: escalate terseness on every empty answer.
+
+  Every attempt now logs `bucket, mech_fixes, prompt_kind, prompt_sections` (token estimate per section).
+- **12:20** Offline smoke test in the pod: with no flags, L4 is solved on round 1 (round 0 is the planted missing-jit). With `--mech`, it is solved on **round 0** (`mech_fixes: ['added @nki.jit']`). The sections record `{api: 395, skeleton: 324, task: 223}`.

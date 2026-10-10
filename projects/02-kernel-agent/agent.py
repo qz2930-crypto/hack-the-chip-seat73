@@ -32,7 +32,9 @@ import time
 
 import numpy as np
 
+import levers
 import nkibench
+import verdicts
 
 MODEL = os.environ.get("KERNEL_AGENT_MODEL", "Qwen/Qwen3-8B")
 
@@ -204,147 +206,11 @@ def copy_kernel(a):
 """
 
 
-def available_names(dotted):
-    """Turn 'no attribute X' into 'here are the real ones'.
+# The verdict -> instruction table lives in verdicts.py (same wording as the old enrich() chain,
+# checked byte-identical on every case in its selftest), so the taxonomy and the doc retrieval
+# can key off the same failure buckets.
+enrich = verdicts.enrich
 
-    Measured: told only `module 'nki.language' has no attribute 'value'`, the model guessed
-    another invented name every round -- value, scalar, sbuf_scalar, dot. A verdict names the
-    mistake and never the fix, so list what actually exists and let it choose.
-    """
-    import difflib
-    import importlib
-    mod_name, _, attr = dotted.rpartition(".")
-    try:
-        mod = importlib.import_module(mod_name)
-    except Exception:
-        return ""
-    names = [n for n in dir(mod) if not n.startswith("_")]
-    close = difflib.get_close_matches(attr, names, n=6, cutoff=0.4)
-    if close:
-        return (f" `{mod_name}` has no `{attr}`. The closest real names are: "
-                f"{', '.join(close)}. Pick one of those or use a different approach.")
-    return (f" `{mod_name}` has no `{attr}`, and nothing similar exists. Its real names include: "
-            f"{', '.join(sorted(names)[:25])}.")
-
-
-def real_signature(func_name):
-    """The actual signature of an NKI function, for when the model invents arguments."""
-    import inspect
-    for mod_name in ("nki.language", "nki.isa", "nki"):
-        try:
-            mod = __import__(mod_name, fromlist=["x"])
-        except Exception:
-            continue
-        fn = getattr(mod, func_name, None)
-        if fn is None:
-            continue
-        try:
-            return f"{mod_name.split('.')[-1]}.{func_name}{inspect.signature(fn)}"
-        except (TypeError, ValueError):
-            return f"{mod_name.split('.')[-1]}.{func_name}"
-    return ""
-
-
-def enrich(error_text):
-    """Add the real names when the failure is an invented API call."""
-    if "'MemoryRegion' object is not callable" in error_text:
-        return (error_text + " nl.sbuf, nl.psum and nl.shared_hbm are memory regions, not "
-                "functions. Do not call them. Allocate with "
-                "nl.ndarray(shape, dtype=nl.float32, buffer=nl.sbuf) and pass the region as the "
-                "buffer= argument.")
-    m = re.search(r"(\w+)\(\) got an unexpected keyword argument '(\w+)'", error_text)
-    if m:
-        sig = real_signature(m.group(1))
-        return (error_text + f" Remove the `{m.group(2)}=` argument."
-                + (f" The real signature is {sig}." if sig else ""))
-    if "unsupported operand type(s) for" in error_text and "NkiTensor" in error_text:
-        return (error_text + " A tile is not a number, so Python operators like += do not work on "
-                "one. Accumulate by allocating a PSUM tile with "
-                "nl.ndarray(shape, nl.float32, buffer=nl.psum) and letting nisa.nc_matmul add into "
-                "it across the loop, or combine two tiles with a nisa op rather than a Python "
-                "operator.")
-    m = re.search(r"dma_copy requires src and dst to have the same number of elements, "
-                  r"got src=(\d+), dst=(\d+)", error_text)
-    if m:
-        src, dst = int(m.group(1)), int(m.group(2))
-        return (error_text + f" The tile you allocated holds {dst} elements but you copied {src} "
-                f"into it. nisa.dma_copy does not slice or broadcast: allocate the destination with "
-                f"EXACTLY the shape of the slice you are moving. If you want a 128x512 piece of a "
-                f"bigger tensor, write "
-                f"t = nl.ndarray((128, 512), dtype=a.dtype, buffer=nl.sbuf) and then "
-                f"nisa.dma_copy(dst=t, src=a[0:128, 0:512]) -- the slice on the right must have the "
-                f"same shape as the tile on the left.")
-    m = re.search(r"dma_copy (\w+) partition dimension (\d+) exceeds maximum (\d+)", error_text)
-    if m:
-        which, got, mx = m.group(1), int(m.group(2)), int(m.group(3))
-        return (error_text + f" A tile may have at most {mx} rows, and you asked for {got}. Do not "
-                f"allocate one tile for the whole tensor: loop over the partition dimension in "
-                f"chunks of at most {mx} with nl.affine_range, allocate the tile inside the loop with "
-                f"the chunk's own size, and copy one chunk at a time, e.g. "
-                f"src=a[i*{mx}:(i+1)*{mx}, :]. If a dimension is already {mx} or smaller, use it "
-                f"whole -- do NOT pad it up to {mx}, that reads past the end of the tensor. The same "
-                f"applies to where you write the result back.")
-    m = re.search(r"value array of shape \((\d+),?\) could not be broadcast to "
-                  r"indexing result of shape \((\d+),?\)", error_text)
-    if m:
-        val, dst = int(m.group(1)), int(m.group(2))
-        return (error_text + f" You assigned {val} elements into a slice that holds {dst}. Assignment "
-                f"does not reshape or broadcast either: the slice on the left and the value on the "
-                f"right must have the SAME shape. If the value is bigger, you are writing a whole tile "
-                f"where a slice belongs -- index the destination to match, e.g. "
-                f"out[i*128:(i+1)*128, :] = tile. If it is smaller, you are looping over the wrong "
-                f"dimension.")
-    m = re.search(r"Out-of-bound access for tensor .*? on dimension (\d+): "
-                  r"index range \[(\d+), (\d+)\] exceed dimension size of (\d+)",
-                  error_text)
-    if m:
-        dim, hi, size = m.group(1), int(m.group(3)), int(m.group(4))
-        return (error_text + f" You indexed up to {hi} on dimension {dim}, which is only {size} "
-                f"long. Tile limits are a MAXIMUM, not a target. Derive every bound from the tensor's "
-                f"own shape -- use min(limit, size) and let the final chunk be partial -- rather than "
-                f"writing a fixed number. Note the two limits differ: the partition dimension (first) "
-                f"allows at most 128, the free dimension allows more.")
-    m = re.search(r"Matmul contraction dimension (\d+) exceeds pmax=(\d+)", error_text)
-    if m:
-        k, mx = int(m.group(1)), int(m.group(2))
-        return (error_text + f" The contraction dimension K is {k} and one nc_matmul can only "
-                f"contract {mx}. Split K into chunks of {mx} and accumulate: allocate ONE psum tile "
-                f"OUTSIDE the K loop, call nisa.nc_matmul into that same psum tile once per chunk so "
-                f"the partial products add up there, and only after the loop copy it out with "
-                f"nisa.tensor_copy. Do not allocate a new psum tile per chunk and do not write partial "
-                f"results to HBM.")
-    m = re.search(r"(\w+) (?:dst|src)? ?must be in \['sbuf', 'psum'\], got shared_hbm", error_text)
-    if m:
-        return (error_text + f" `nisa.{m.group(1)}` only moves data between on-chip buffers, sbuf and "
-                f"psum. To reach HBM -- the tensor you allocated with buffer=nl.shared_hbm and will "
-                f"return -- use nisa.dma_copy instead. The usual sequence is nc_matmul into psum, "
-                f"tensor_copy psum to sbuf, then dma_copy sbuf to the shared_hbm output.")
-    m = re.search(r"(\w+) must be in \['(\w+)'\], got (\w+)", error_text)
-    if m:
-        which, needed, got = m.groups()
-        place = {"psum": "nl.psum", "sbuf": "nl.sbuf"}.get(needed, needed)
-        return (error_text + f" Allocate the `{which}` tile with buffer={place} instead of "
-                f"nl.{got}. For nisa.nc_matmul: dst must be in nl.psum, and stationary and moving "
-                f"must both be in nl.sbuf. Copy between them with nisa.tensor_copy.")
-    if "got multiple values for argument" in error_text:
-        return (error_text + " Pass every argument by keyword, e.g. "
-                "nisa.nc_matmul(dst=..., stationary=..., moving=...), so none is bound twice.")
-    if "must have at least 2 dimensions" in error_text:
-        return (error_text + " Every SBUF and PSUM tile needs two dimensions: a partition dimension "
-                "first, then a free dimension. A 1-D tile is not allowed, so write "
-                "nl.ndarray((rows, cols), ...) and give a length-N vector the shape (1, N) or "
-                "(N, 1) depending on which axis you are reducing over.")
-    if "cannot reshape array of size" in error_text:
-        return (error_text + " Do not reshape. Work with the shapes you were given and slice "
-                "them into tiles, e.g. src=a[0:128, 0:64].")
-    m = re.search(r"module '([\w.]+)' has no attribute '(\w+)'", error_text)
-    if m:
-        return error_text + available_names(f"{m.group(1)}.{m.group(2)}")
-    m = re.search(r"'(\w+)' object has no attribute '(\w+)'", error_text)
-    if m:
-        return (error_text + f" A {m.group(1)} is not a numpy array, so it has no "
-                f"`{m.group(2)}`. Use the nl/nisa functions instead.")
-    return error_text
 
 def first_prompt(level, terse=0):
     """Deliberately short, and it does NOT list the rules.
@@ -496,10 +362,43 @@ def offline_answers(level, n, rnd):
 
 # ---------------------------------------------------------------- the loop
 
+def build_first(a, level, terse):
+    """The first prompt, and the parts inserted into it (for token accounting)."""
+    prompt = first_prompt(level, terse)
+    parts = dict(api=API_CARD if API_CARD in prompt else "")
+    if a.skeleton:
+        sk = levers.skeleton(level)
+        prompt = prompt + "\n\n" + sk
+        parts["skeleton"] = sk
+    return prompt, parts
+
+
+def build_repair(a, level, latest, ledger=""):
+    """Repair prompt for the latest attempt: one named change. --retrieve appends the AWS doc
+    excerpt keyed by the failure bucket. Returns (prompt, parts, extra log fields)."""
+    code, feedback = latest
+    prompt = repair_prompt(level, code, feedback)
+    parts = dict(code=code, error=feedback)
+    info = dict(bucket=verdicts.classify(feedback))
+    if a.retrieve:
+        text, src = levers.doc_slice(info["bucket"])
+        if text:
+            docs = f"\n\nFrom the NKI documentation:\n{text}"
+            prompt += docs
+            parts["docs"] = docs
+            info["doc_source"] = src
+    if ledger:
+        led = f"\n\nThese approaches have already failed, so do something different:\n{ledger}"
+        prompt += led
+        parts["ledger"] = led
+    return prompt, parts, info
+
+
 def solve(a, level, log):
     print(f"\n=========== level {level}: {nkibench.LEVELS[level]['op']} ===========")
     terse = a.terse
-    prompt = first_prompt(level, terse)
+    prompt, parts = build_first(a, level, terse)
+    pinfo = dict(kind="first")
     best = (0.0, None, "")
     tried, streak, seen = [], 0, {}
     latest = ("", "")
@@ -507,17 +406,23 @@ def solve(a, level, log):
     for rnd in range(a.rounds):
         t0 = time.perf_counter()
         replies = run_samples(a, level, prompt, rnd)
+        sec = levers.sections(prompt, **parts)
         graded = []
         for si, (reply, meta) in enumerate(replies):
             src = extract_code(reply)
+            fixes = []
+            if a.mech:
+                src, fixes = levers.mechanical_fix(src, level)
             # Measured on seat 73: the local server decodes deterministically, so the samples of a
             # round are usually byte-identical. Grading is deterministic too, so grade each text once.
             if src not in grade_cache:
                 grade_cache[src] = grade(src, level)
-            reward, parts, feedback = grade_cache[src]
-            graded.append((reward, src, feedback, parts))
+            reward, gparts, feedback = grade_cache[src]
+            graded.append((reward, src, feedback, gparts))
             log.write(json.dumps(dict(tag=a.tag, run=a.run_index, level=level, round=rnd,
-                                      sample=si, ts=time.time(), reward=reward, parts=parts,
+                                      sample=si, ts=time.time(), reward=reward, parts=gparts,
+                                      bucket=verdicts.classify(feedback), mech_fixes=fixes,
+                                      prompt_kind=pinfo, prompt_sections=sec,
                                       prompt_chars=len(prompt), reply_chars=len(reply),
                                       finish=meta.get("finish"), usage=meta.get("usage"),
                                       reasoning_chars=meta.get("reasoning_chars"),
@@ -560,14 +465,22 @@ def solve(a, level, log):
             return best[0], rnd + 1
         tried.append(top[2])
         repeats = streak
+        empty = not (top[1] or "").strip()
+        if a.empty_terse and empty:
+            # STATE.md's untried fix: escalate terseness on EVERY empty answer, not only while no
+            # code has ever come back -- once a round succeeds the prompt grows again otherwise.
+            terse = min(terse + 1, 2)
+            prompt, parts = build_first(a, level, terse)
+            pinfo = dict(kind="first", terse=terse)
+            print(f"  empty answer, so re-asking with a shorter prompt (terseness {terse})")
+            continue
         if repeats >= 2 and (best[1] or "").strip():
             # Sampling on this endpoint is greedy, so an unchanged prompt returns an unchanged
             # answer. Measured: the same TypeError 19 rounds running. Changing the prompt is the
             # only thing that can change the answer, so say what has already been tried.
             ledger = "\n".join(f"- {t[:160]}" for t in dict.fromkeys(tried))
-            prompt = (repair_prompt(level, latest[0], latest[1])
-                      + f"\n\nThese approaches have already failed, so do something different:\n"
-                        f"{ledger}")
+            prompt, parts, info = build_repair(a, level, latest, ledger)
+            pinfo = dict(kind="repair+ledger", **info)
             print(f"  same failure {repeats}x — adding a ledger of {len(set(tried))} failed "
                   f"attempts to break the repeat")
             continue
@@ -576,10 +489,12 @@ def solve(a, level, log):
             # 202-character prompt and, under greedy sampling, the identical non-answer six
             # rounds running. Shorten and re-ask instead.
             terse = min(terse + 1, 2)
-            prompt = first_prompt(level, terse)
+            prompt, parts = build_first(a, level, terse)
+            pinfo = dict(kind="first", terse=terse)
             print(f"  no code yet, so re-asking with a shorter prompt (terseness {terse})")
         else:
-            prompt = repair_prompt(level, latest[0], latest[1])
+            prompt, parts, info = build_repair(a, level, latest)
+            pinfo = dict(kind="repair", **info)
     print(f"  not solved in {a.rounds} rounds; best reward {best[0]:.2f}")
     return best[0], a.rounds
 
@@ -613,6 +528,16 @@ def main():
                     help="let the model reason first; costs budget, and it ran out")
     ap.add_argument("--offline", action="store_true")
     ap.add_argument("--tag", default="", help="label written into every logged attempt")
+    ap.add_argument("--mech", action="store_true",
+                    help="LEVER: fix missing @nki.jit / wrong entry name / invented imports by AST "
+                         "before grading, without a model call")
+    ap.add_argument("--skeleton", action="store_true",
+                    help="LEVER: append a rank-aware structural template with TODO slots to the "
+                         "first prompt (not a complete kernel)")
+    ap.add_argument("--retrieve", action="store_true",
+                    help="LEVER: append the AWS doc excerpt keyed by the failure bucket to repairs")
+    ap.add_argument("--empty-terse", action="store_true",
+                    help="LEVER: escalate terseness on every empty answer (STATE.md's untried fix)")
     a = ap.parse_args()
     a.run_index = 0
 

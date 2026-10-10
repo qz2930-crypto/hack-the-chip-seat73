@@ -146,3 +146,4 @@ Every decision, run and dead end, written as it happens.
   - seat-71: **Stage A v3** (`--v2 --v3`, 10 levels × 5)
   - seat-73: **C9** on L1–L4
   - **C9 = the final agent**: every adopted lever + `--v8-verdicts --prompt-fixes --device-rules`, levels 1–8 × 5.
+- **15:45** 🎯 **L6 SOLVED (provisional; arms still finishing)** [sim]. **c8b (`--prompt-fixes`: the L6 traffic sentence replaced by L7's) 4/4, all on round 3**; c8a (`--v8-verdicts` k-loop hint) 3/4 so far (round 4). The root cause was **upstream's own level-6 hint** steering the model to a k-outer loop. Change that one sentence and L6 goes from 0/5 (c5, c7) to 4/4. Stage A v3 (n=1–2 so far): A4, A6, A9 newly solved; A1, A2, A10 hold; A5/A8 still fail. **A7 0.90 under v3 vs 4/5 under v1: a possible v3 regression, to be checked.** L8 (c8) still 0.30 after 5 rounds.

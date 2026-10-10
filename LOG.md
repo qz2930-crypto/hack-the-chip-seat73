@@ -33,13 +33,24 @@ Every decision, run and dead end, written as it happens.
 ## Phase 2 — levers built (behind flags; defaults == upstream behaviour)
 
 - **11:55** Baseline relaunched as **4 concurrent per-level processes** (`--level N --rounds 8 --samples 1 --context 8192 --repeat 5`, tags `base_L1..4`). Why `--samples 1`: measured on the idle server, 1 request = 300 tok in 21.6 s, 4 concurrent = 54.5 s each (only 1.6× aggregate throughput), and the 4 samples were byte-identical anyway. With 4 processes, the server's 4 slots carry 4 *different* jobs.
-- **12:05** **Skeletons proved completable before any prompt uses them** [sim]. Remainder-safe tiled matmul (`m_sz = min(TM, M - m0)`, one PSUM accumulator outside the K loop): L4 4/4 and L3 1/1. Avgpool via strided-slice accumulation (`tensor_tensor` add over `in_tile[:, di::p, dj::p]`): L1 4/4. Avgpool via per-window `tensor_reduce(axis=(1,2))`: L1 4/4. These hand-written kernels are NOT in any prompt.
-- **12:10** `verdicts.py`: upstream `enrich()` as an explicit table of (bucket, regex, instruction), plus `classify(feedback)` → bucket for every grade stage. Selftest checks 14 raw errors and 9 feedback strings. **Byte-identical to upstream enrich() on all 14 cases**, so swapping it in does not change what the model is told.
-- **12:15** `levers.py` + `agent.py` flags:
+- **11:59** **Skeletons proved completable before any prompt uses them** [sim]. Remainder-safe tiled matmul (`m_sz = min(TM, M - m0)`, one PSUM accumulator outside the K loop): L4 4/4 and L3 1/1. Avgpool via strided-slice accumulation (`tensor_tensor` add over `in_tile[:, di::p, dj::p]`): L1 4/4. Avgpool via per-window `tensor_reduce(axis=(1,2))`: L1 4/4. These hand-written kernels are NOT in any prompt.
+- **12:00** `verdicts.py`: upstream `enrich()` as an explicit table of (bucket, regex, instruction), plus `classify(feedback)` → bucket for every grade stage. Selftest checks 14 raw errors and 9 feedback strings. **Byte-identical to upstream enrich() on all 14 cases**, so swapping it in does not change what the model is told.
+- **12:01** `levers.py` + `agent.py` flags:
   - `--mech`: AST fixes for entry name, `@nki.jit`, imports.
   - `--skeleton`: rank-aware template with TODO slots, 209–324 tokens.
   - `--retrieve`: bucket-keyed excerpts of the vendored AWS corpus, 33–129 tokens each, with source lines cited.
   - `--empty-terse`: escalate terseness on every empty answer.
 
   Every attempt now logs `bucket, mech_fixes, prompt_kind, prompt_sections` (token estimate per section).
-- **12:20** Offline smoke test in the pod: with no flags, L4 is solved on round 1 (round 0 is the planted missing-jit). With `--mech`, it is solved on **round 0** (`mech_fixes: ['added @nki.jit']`). The sections record `{api: 395, skeleton: 324, task: 223}`.
+- **12:02** Offline smoke test in the pod: with no flags, L4 is solved on round 1 (round 0 is the planted missing-jit). With `--mech`, it is solved on **round 0** (`mech_fixes: ['added @nki.jit']`). The sections record `{api: 395, skeleton: 324, task: 223}`.
+- **12:04** Clock check: pod `date -u` = 16:04 → 12:04 ET. Phase-2 timestamps above were corrected; from now on every timestamp comes from `scripts/now`.
+- **12:05** **Queue runner** (`runq.py`, pod-side) keeps 4 agent processes alive. Experiments **E1 `--skeleton`, E2 `--retrieve`, E3 `--mech`**, each measured against the baseline, are queued as 20 single-run jobs each (4 levels × 5 runs, tags `<exp>_L<n>_r<k>`). They start as baseline levels finish. **Pod code is FROZEN** until E1–E3 finish (runq launches fresh processes that would import changed modules). Harness work is tested in `/workspace/dev` instead.
+  - Confound noted: `verdicts.py` gained a `contraction_mismatch` translation after the baseline started, so E1–E3 have it and the baseline does not. It affects L2 only (nc_matmul misused for transpose).
+- **12:05** Baseline, early observation: runs are **not** identical despite deterministic decoding (L3 run 0 = `dma_shape_mismatch`, run 1 = `tile_1d`; L4 run 0 = 0.30, run 1 = 0.62). So `--repeat 5` measures real variance, presumably from batching across concurrent requests. Also, **L1 and L2 reach for `nc_matmul`** (pooling and transpose via matmul): the API card's long matmul paragraph biases non-matmul levels.
+
+## Phase 3 (early) — held-out hostile cases + calibration
+
+- **12:06** `heldout.py` defines hostile cases per level, never shown to the agent: C=1 / P=1 / M=1, H,W not divisible by pool, prime K=131, ragged K=96 M=200 N=700, N=513, ×1e4 magnitudes, a constant row. `confidence(src, level)` is computed from code + public result only (rules: shape asserts ×0.4, no remainder handling while the public set has no partial tile ×0.5, hard-coded public dims ×0.7, hazard ×0.3). Scored with a Brier score and a reliability table.
+- **12:06** **All official AWS tutorial matmul kernels (L4–L7 references) FAIL held-out** [sim]: they `assert` divisibility by 128/512, so M=200 / M=1 raise. Confidence had rated them 0.38. **The clamped L6/L7 references also fail.** Reference-only calibration: Brier **0.154**, n=7.
+- **12:07** **Silent wrong answer in the VERBATIM AWS tutorial kernel** [sim]: `nki_matmul_block_free_dimension_` asserts M%256 and N%1024 but not K%128. With **K=131** it returns numbers that are wrong by 1.16× the output RMS: no assert, no exception (`K // 128` drops 3 rows of the contraction). K=128 passes. This is the "wrong kernels return plausible numbers" property, found in AWS's own tutorial.
+- **12:06** The remainder-safe skeleton kernel (`min(TM, M - m0)` etc.) passes **all 4** held-out matmul cases. Both avgpool variants pass all 4 held-out pool cases. So the skeleton's structure is the held-out-robust one; the tutorial's is not.

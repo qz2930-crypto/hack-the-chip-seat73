@@ -4,10 +4,11 @@
 #   scripts/pod.sh run '<cmd>'          run a command in the pod (cwd = the kernel-agent project)
 #   scripts/pod.sh start <label> '<agent args>'   nohup an agent run writing runs/<label>.{log,jsonl} in the pod
 #   scripts/pod.sh pull <label>         copy that run back to runs/<HHMM>_<label>/
+#   scripts/pod.sh pullall              mirror all pod logs into runs/live/
 set -euo pipefail
 export PATH="/c/Program Files/Amazon/AWSCLIV2:$PATH" AWS_PROFILE=${AWS_PROFILE:-hack}
 POD=${POD:-seat-73}
-PROJ=/workspace/projects/02-kernel-agent
+PROJ=${PROJ:-/workspace/projects/02-kernel-agent}   # PROJ=/workspace/dev for harness work during experiments
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 k() { kubectl exec "$POD" -c app -- bash -lc "$1"; }
 case "$1" in
@@ -25,5 +26,10 @@ case "$1" in
     mkdir -p "$dest"
     k "cd $PROJ/runs && tar -cf - $label.log $label.jsonl" | tar -C "$dest" -xf -
     echo "pulled to $dest" ;;
-  *) echo "usage: $0 sync|run|start|pull"; exit 1 ;;
+  pullall)
+    # mirror every log in the pod's runs/ into runs/live/ (overwritten each time; snapshot later)
+    mkdir -p "$ROOT/runs/live"
+    k "cd $PROJ/runs && tar -cf - *.log *.jsonl *.txt 2>/dev/null" | tar -C "$ROOT/runs/live" -xf -
+    echo "mirrored to runs/live" ;;
+  *) echo "usage: $0 sync|run|start|pull|pullall"; exit 1 ;;
 esac

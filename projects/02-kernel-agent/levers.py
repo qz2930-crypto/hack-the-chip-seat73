@@ -12,7 +12,7 @@ levers.py -- the Phase-2 interventions, each behind its own agent.py flag so it 
               (research/neuron-agentic-development), chosen by the failure bucket from verdicts.py.
 
 Every skeleton below was proved completable BEFORE it went into a prompt: filled in by hand it
-passes the harness (L1 4/4 two different ways, L3 1/1, L4 4/4) -- see LOG.md 12:0x.
+passes the harness (L1 4/4 two different ways, L3 1/1, L4 4/4) -- see LOG.md 11:59.
 """
 
 import ast

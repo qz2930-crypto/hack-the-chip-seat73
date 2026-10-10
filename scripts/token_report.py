@@ -103,7 +103,7 @@ def png(ps, path, tag, run, ratio):
     ax.set_xticks(x)
     ax.set_xticklabels([f"L{p['level']}\nr{p['round']}" for p in sel], fontsize=8, color=MUTED)
     ax.set_ylabel("input tokens (server-calibrated)", color=MUTED, fontsize=9)
-    ax.set_title(f"Where the input budget went, per attempt — {tag or 'all'} run {run} [sim]",
+    ax.set_title(f"Where the input budget went, per attempt (window 8192 tokens) — {tag or 'all'} run {run} [sim]",
                  color=INK, fontsize=10, loc="left")
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)

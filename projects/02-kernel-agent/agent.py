@@ -88,7 +88,8 @@ def grade(source, level):
     parts["rules"] = True
 
     spec = nkibench.LEVELS[level]
-    path = f"/tmp/_agent_level{level}.py"
+    # per-process path: runq runs several jobs of the SAME level at once (race found 12:5x)
+    path = f"/tmp/_agent_level{level}_{os.getpid()}.py"
     with open(path, "w") as f:
         f.write(source)
     try:
@@ -135,6 +136,8 @@ def grade(source, level):
         m = (nkibench.check_inputs_untouched(before, args)
              or nkibench.describe_mismatch(got, want)
              or nkibench.check_traffic_bar(level, counted, args, want))
+        if m and m.startswith("NUMERICAL MISMATCH"):
+            m += verdicts.code_hint(source, level)       # '' unless --v2-verdicts finds a cause
         # A simulator warning about a hardware-correctness hazard counts as a failure even when the
         # numbers happen to match on CPU: the kernel would be wrong on the device.
         hazards = [w for w in counted.get("warnings", [])

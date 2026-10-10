@@ -51,12 +51,16 @@ while True:
     pending = [j for j in jobs() if j[0] not in started()]
     if pending and running() < MAX:
         tag, args = pending[0][0], (pending[0][1] if len(pending[0]) > 1 else "")
-        # "STAGEA <args>" runs the Stage-A (numpy/kernelbench) agent against the local server
+        # "@/path <args>" runs the job from another code directory (a newer harness) while its
+        # logs still land in THIS runs/; "STAGEA <args>" runs the Stage-A agent instead of agent.py
+        here, cwd = os.path.abspath("runs"), "."
+        if args.startswith("@"):
+            cwd, args = (args[1:].split(None, 1) + [""])[:2]
         prog = "agent.py"
         if args.startswith("STAGEA"):
             prog, args = "stagea.py", args[len("STAGEA"):].strip()
-        cmd = (f"python -u {prog} --tag {tag} --log runs/{tag}.jsonl {args} "
-               f"> runs/{tag}.log 2>&1 < /dev/null")
+        cmd = (f"cd {cwd} && python -u {prog} --tag {tag} --log {here}/{tag}.jsonl {args} "
+               f"> {here}/{tag}.log 2>&1 < /dev/null")
         subprocess.Popen(cmd, shell=True, start_new_session=True)
         with open("runs/started.txt", "a") as f:
             f.write(tag + "\n")

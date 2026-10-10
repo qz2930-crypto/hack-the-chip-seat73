@@ -95,6 +95,22 @@ def _v2(bucket, m, text, code, level):
     return None
 
 
+def code_hint(code, level):
+    """v2, for failures that do NOT raise: a swapped slice on a square tile computes silently wrong
+    numbers instead of going out of bounds. Measured in E1: all 5 skeleton runs of level 4 wrote
+    lhsT[m0:.., k0:..] and got NUMERICAL MISMATCH on every multi-tile shape. Returns '' if none."""
+    if not V2:
+        return ""
+    sw = _swapped_axes(code, level)
+    if not sw:
+        return ""
+    name, axes, seen, good = sw[0]
+    return (f"\n  CAUSE: the slice `{seen}...` lists the axes in the wrong order. `{name}` has "
+            f"shape [{axes[0]}, {axes[1]}], so its FIRST index must be the {axes[0]} range: write "
+            f"`{good}`. On square tiles this does not crash, it silently computes the wrong product. "
+            f"Change only that slice.")
+
+
 _PARTITION_COLLAPSED = re.compile(r"Partition dim size must be preserved, got (\d+) -> (\d+)")
 
 
@@ -400,6 +416,10 @@ def selftest():
     ok = b == "swapped_axes" and "lhsT[k0:k0 + k_sz, m0:m0 + m_sz]" in txt
     bad += not ok
     print(f"  {'ok  ' if ok else 'FAIL'} v2 swapped axes        -> {b}")
+    h = code_hint(code, 4)
+    ok = "lhsT[k0:k0 + k_sz, m0:m0 + m_sz]" in h and classify("NUMERICAL MISMATCH ..." + h) == "swapped_axes"
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} v2 code_hint on a numeric failure")
     b, _ = translate(err, "lhsT[k0:k0 + k_sz, m0:m0 + m_sz]", 3)
     ok = b == "out_of_bounds"
     bad += not ok

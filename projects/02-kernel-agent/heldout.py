@@ -26,6 +26,7 @@ import argparse
 import ast
 import glob
 import json
+import os
 import re
 import sys
 
@@ -83,7 +84,7 @@ def _run_case(kernel, level, spec, transform):
 
 
 def evaluate(src, level):
-    path = f"/tmp/_heldout_{level}.py"
+    path = f"/tmp/_heldout_{level}_{os.getpid()}.py"
     with open(path, "w") as f:
         f.write(src)
     try:

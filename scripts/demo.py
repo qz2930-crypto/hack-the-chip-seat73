@@ -45,7 +45,7 @@ def screen1():
     up = load("skel_L4_r0")[0]
     ours = load("c1_L4_r0")
     line = next(l for l in up["code"].splitlines() if "lhsT[" in l and "dma_copy" in l)
-    print(f"  the model wrote:{R}{line.rstrip()}{X}")
+    print(f"  the model wrote:  {R}{line.strip()}{X}")
     print(f"  {D}lhsT has shape [K, M] -- the axes are swapped. On square tiles this does NOT crash.{X}\n")
     up_fb = up["feedback"].split(" On ", 1)[-1]
     up_fb = re.sub(r"at index .*?\n", "", up_fb)

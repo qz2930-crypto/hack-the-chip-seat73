@@ -186,3 +186,4 @@ Every decision, run and dead end, written as it happens.
   - **Stage A final** (`--v2 --v3 --v4-smart`): **9/10** (A5 unsolved).
   - **Calibration**: 38 claims, Brier **0.030**; every agent claim at 0.95 passes held-out (32/32).
   - FAILURES.md now separates the two ladders (L1–L8 vs A1–A10).
+- **18:01** Presentation: an English slide deck (9 slides) built around the **two-loop** story. Inner loop: code → agent → checker → instruction. Outer loop: stall → **Claude audits from outside the code** → prove the fix by hand → A/B on 5 seats → ship a flag. The demo is a 43 s video (`demo/demo.mp4`, rendered from the real logs by `scripts/make_demo_video.py`) placed right after the cover. The deck states the regrade coverage as 354 decision attempts, not all 1,636.

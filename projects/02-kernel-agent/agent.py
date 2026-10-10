@@ -32,6 +32,7 @@ import time
 
 import numpy as np
 
+import heldout
 import levers
 import nkibench
 import verdicts
@@ -447,7 +448,14 @@ def solve(a, level, log):
                   f"({time.perf_counter() - t0:.1f}s)")
             print(f"  {top[2][:400]}")
         if top[0] >= sum(WEIGHTS.values()) - 1e-9:
-            print(f"  SOLVED on round {rnd}. {top[2]}")
+            # Calibration: say how sure, from the code and the public result only. heldout.py later
+            # scores this number against hostile cases the agent never saw.
+            conf, why = heldout.confidence(top[1], level)
+            log.write(json.dumps(dict(tag=a.tag, run=a.run_index, level=level, round=rnd,
+                                      claim="solved", confidence=conf, why=why,
+                                      ts=time.time())) + "\n")
+            log.flush()
+            print(f"  SOLVED on round {rnd}, confidence {conf:.2f} ({'; '.join(why)}). {top[2]}")
             print("  ---------------- the kernel ----------------")
             print(textwrap.indent(top[1], "  "))
             print("  -------------------------------------------")
@@ -458,6 +466,9 @@ def solve(a, level, log):
             how = ("the identical failure %d rounds running" % streak if streak >= a.give_up_after
                    else "this failure for the %dth time, alternating with %d other(s)"
                         % (seen[top[2]], len(seen) - 1))
+            log.write(json.dumps(dict(tag=a.tag, run=a.run_index, level=level, claim="not_verified",
+                                      confidence=0.0, best=best[0], ts=time.time())) + "\n")
+            print(f"  COULD NOT VERIFY level {level} (confidence 0.00).")
             print(f"  STOPPING this level: {how}. The agent is cycling between a fixed set of "
                   f"mistakes rather than converging, so more rounds will not help. Failures seen:")
             for f, n in sorted(seen.items(), key=lambda kv: -kv[1]):
@@ -495,7 +506,10 @@ def solve(a, level, log):
         else:
             prompt, parts, info = build_repair(a, level, latest)
             pinfo = dict(kind="repair", **info)
-    print(f"  not solved in {a.rounds} rounds; best reward {best[0]:.2f}")
+    print(f"  not solved in {a.rounds} rounds; best reward {best[0]:.2f}. COULD NOT VERIFY a "
+          f"kernel for level {level}: confidence 0.00")
+    log.write(json.dumps(dict(tag=a.tag, run=a.run_index, level=level, claim="not_verified",
+                              confidence=0.0, best=best[0], ts=time.time())) + "\n")
     return best[0], a.rounds
 
 

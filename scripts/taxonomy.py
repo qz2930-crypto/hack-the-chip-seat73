@@ -101,6 +101,8 @@ def load(paths):
             line = line.strip()
             if line:
                 r = json.loads(line)
+                if "claim" in r:
+                    continue
                 r["_file"] = p
                 rows.append(r)
     return rows

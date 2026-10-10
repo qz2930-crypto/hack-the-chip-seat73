@@ -27,6 +27,8 @@ def runs_of(paths):
             if not line.strip():
                 continue
             r = json.loads(line)
+            if "claim" in r:
+                continue
             tag = r.get("tag") or "?"
             exp = tag.split("_L")[0]
             key = (exp, r["level"], tag, r.get("run", 0))

@@ -14,6 +14,26 @@ will almost certainly want to improve it.
 A candidate is a Python file defining `kernel(...)` with the same signature as the reference.
 
 Only numpy is required.
+
+Tolerance
+---------
+An element passes when |got - want| <= atol + rtol * |want| (a mixed criterion, not a bare
+relative one). The reference is float64-accurate; kernels compute in float32. So:
+
+    rtol = max(8 * sqrt(n_acc) * eps32, 1e-5)        eps32 = 2**-23 ~= 1.19e-7
+    atol = rtol * RMS(reference output)
+
+n_acc is the accumulation length of the level (1 elementwise, row length for row reductions
+and norms, K for matmul, d + window for attention, C_in*K for conv; see `level(...)`).
+sqrt(n_acc) is the typical growth of float32 rounding error in a length-n sum; 8 is a safety
+factor; atol judges near-zero outputs against the magnitude of the output, not against
+themselves. The full derivation is in `tolerance()`. `--tol X` overrides rtol only.
+
+Failure messages
+----------------
+Each numerical failure prints the worst element, then three tagged lines whose leading tag is
+stable (grep for it): `TILE <class>:` (relation to the 128x512 tile grid), `PATTERN <class>:`
+(spatial shape of the wrong elements), `DIRECTION <class>:` (how the wrong values are wrong).
 """
 
 import argparse
@@ -123,20 +143,32 @@ def _cases_2d(seed, prime=True):
 LEVELS = {}
 
 
-def level(n, name, trap, ref, build):
-    LEVELS[n] = dict(n=n, name=name, trap=trap, ref=ref, build=build)
+def level(n, name, trap, ref, build, n_acc=None, n_acc_doc="1 (elementwise)"):
+    """Register a rung. `n_acc(*args)` returns the accumulation length that sets the
+    tolerance for one test case (see `tolerance`); default 1 = elementwise."""
+    LEVELS[n] = dict(n=n, name=name, trap=trap, ref=ref, build=build,
+                     n_acc=n_acc or (lambda *a: 1), n_acc_doc=n_acc_doc)
+
+
+def _row_len(x, *_):
+    """Accumulation length of a reduction/normalisation over the last axis."""
+    return int(np.shape(x)[-1])
 
 
 level(1, "elementwise relu(a*x+b)", "none — your 'the loop works' checkpoint", _ref_1,
      lambda: [(lbl, (x, 2.5, -0.5)) for lbl, x in _cases_2d(1)])
 level(2, "row-wise sum", "the partial final tile", _ref_2,
-     lambda: [(lbl, (x,)) for lbl, x in _cases_2d(2)])
+     lambda: [(lbl, (x,)) for lbl, x in _cases_2d(2)],
+     n_acc=_row_len, n_acc_doc="C (row length)")
 level(3, "row-wise max", "partial tile, and the identity is -inf not 0", _ref_3,
-     lambda: [(lbl, (x,)) for lbl, x in _cases_2d(3)])
+     lambda: [(lbl, (x,)) for lbl, x in _cases_2d(3)],
+     n_acc=_row_len, n_acc_doc="C (row length)")
 level(4, "RMSNorm over last axis", "accumulation order and dtype", _ref_4,
-     lambda: [(lbl, (x,)) for lbl, x in _cases_2d(4)])
+     lambda: [(lbl, (x,)) for lbl, x in _cases_2d(4)],
+     n_acc=_row_len, n_acc_doc="C (row length)")
 level(5, "softmax over last axis", "naive exp OVERFLOWS; needs max subtraction", _ref_5,
-     lambda: [(lbl, (x,)) for lbl, x in _cases_2d(5)])
+     lambda: [(lbl, (x,)) for lbl, x in _cases_2d(5)],
+     n_acc=_row_len, n_acc_doc="C (row length)")
 level(6, "tiled transpose", "tile boundaries on non-square non-divisible shapes", _ref_6,
      lambda: [(lbl, (x,)) for lbl, x in _cases_2d(6)])
 
@@ -155,10 +187,12 @@ def _build_7():
 
 
 level(7, "tiled matmul with accumulation", "accumulator dtype; K not divisible by the tile",
-     _ref_7, _build_7)
+     _ref_7, _build_7,
+     n_acc=lambda a, b: int(a.shape[1]), n_acc_doc="K (contraction length)")
 level(8, "layernorm (mean and variance)",
      "E[x^2]-E[x]^2 catastrophically cancels at large means", _ref_8,
-     lambda: [(lbl, (x,)) for lbl, x in _cases_2d(8)])
+     lambda: [(lbl, (x,)) for lbl, x in _cases_2d(8)],
+     n_acc=_row_len, n_acc_doc="C (row length)")
 
 
 def _build_9():
@@ -173,7 +207,10 @@ def _build_9():
 
 
 level(9, "windowed attention (band w)", "band edges, and w larger than the sequence",
-     _ref_9, _build_9)
+     _ref_9, _build_9,
+     # q.k^T sums over d, then softmax and P@V sum over the window: two chained reductions.
+     n_acc=lambda q, k, v, w: int(q.shape[1]) + min(2 * int(w) + 1, int(q.shape[0])),
+     n_acc_doc="d + min(2w+1, n) (score dot + window)")
 
 
 def _build_10():
@@ -188,7 +225,9 @@ def _build_10():
 
 
 level(10, "1D conv with stride and dilation", "output-size off-by-one; dilation at the tail",
-     _ref_10, _build_10)
+     _ref_10, _build_10,
+     n_acc=lambda x, wt, s, d: int(wt.shape[1]) * int(wt.shape[2]),
+     n_acc_doc="C_in * K (receptive field)")
 
 # Per-level bans: the numpy call that would trivially do the whole job.
 BANNED_RUNG = {

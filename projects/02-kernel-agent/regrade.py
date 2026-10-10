@@ -16,9 +16,17 @@ import json
 import sys
 
 import agent
+import nkibench
+import verdicts
 
 
 def main(paths):
+    # Re-grade with the SAME feedback flags the run used (they change the wording, never the
+    # reward): --v2 / --v3 / --directional on the command line, mirroring agent.py's switches.
+    verdicts.V2 = "--v2" in sys.argv
+    verdicts.V3 = "--v3" in sys.argv
+    nkibench.DIRECTIONAL = "--directional" in sys.argv
+    paths = [p for p in paths if not p.startswith("--")]
     rows, cache = [], {}
     for p in paths:
         for line in open(p, encoding="utf-8"):
@@ -33,6 +41,8 @@ def main(paths):
         reward, _, feedback = cache[k]
         if abs(reward - r["reward"]) > 1e-9 or feedback != r["feedback"]:
             bad += 1
+            if abs(reward - r["reward"]) <= 1e-9:
+                print(f"  (reward identical, feedback wording differs: check the flags)")
             print(f"MISMATCH {p} L{r['level']} run {r.get('run')} round {r['round']}: logged "
                   f"{r['reward']:.2f}, regraded {reward:.2f}")
     print(f"regraded {len(rows)} attempts ({len(cache)} distinct kernels): {bad} mismatches")
@@ -40,4 +50,4 @@ def main(paths):
 
 
 if __name__ == "__main__":
-    sys.exit(1 if main([q for a in sys.argv[1:] for q in glob.glob(a)]) else 0)
+    sys.exit(1 if main([q for a in sys.argv[1:] for q in (glob.glob(a) or [a])]) else 0)

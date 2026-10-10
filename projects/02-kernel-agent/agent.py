@@ -53,6 +53,7 @@ REASONING_KEYS = ("reasoning", "reasoning_content")
 # until the kernel is right.
 
 WEIGHTS = dict(parses=0.1, rules=0.2, runs=0.2, correct=0.5)
+_GRADE_SEQ = __import__('itertools').count()
 
 
 def grade(source, level):
@@ -89,7 +90,10 @@ def grade(source, level):
 
     spec = nkibench.LEVELS[level]
     # per-process path: runq runs several jobs of the SAME level at once (race found 12:5x)
-    path = f"/tmp/_agent_level{level}_{os.getpid()}.py"
+    # A FRESH path per call: Python's bytecode cache keys a module on (path, mtime-in-seconds, size),
+    # so two different kernels of the same size graded within one second at the same path load the
+    # STALE first one. Found 13:1x when regrade.py (many grades per second) disagreed with the logs.
+    path = f"/tmp/_agent_level{level}_{os.getpid()}_{next(_GRADE_SEQ)}.py"
     with open(path, "w") as f:
         f.write(source)
     try:

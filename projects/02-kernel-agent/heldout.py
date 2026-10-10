@@ -49,6 +49,8 @@ def _const_row(args):
     return tuple(out)
 
 
+_SEQ = __import__("itertools").count()
+
 HELDOUT = {
     1: [(dict(shape=(1, 8, 8), pool_size=2), None, "C=1"),
         (dict(shape=(128, 7, 7), pool_size=2), None, "H,W not divisible by pool"),
@@ -84,7 +86,7 @@ def _run_case(kernel, level, spec, transform):
 
 
 def evaluate(src, level):
-    path = f"/tmp/_heldout_{level}_{os.getpid()}.py"
+    path = f"/tmp/_heldout_{level}_{os.getpid()}_{next(_SEQ)}.py"   # fresh path: see agent.grade
     with open(path, "w") as f:
         f.write(src)
     try:

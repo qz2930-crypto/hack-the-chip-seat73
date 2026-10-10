@@ -142,6 +142,8 @@ def grade(source, level):
              or nkibench.check_traffic_bar(level, counted, args, want))
         if m and m.startswith("NUMERICAL MISMATCH"):
             m += verdicts.code_hint(source, level)       # '' unless --v2-verdicts finds a cause
+        if m and m.startswith("CORRECT, BUT TOO MUCH HBM TRAFFIC"):
+            m += verdicts.traffic_hint(source, level)    # '' unless --v4-verdicts finds a cause
         # A simulator warning about a hardware-correctness hazard counts as a failure even when the
         # numbers happen to match on CPU: the kernel would be wrong on the device.
         hazards = [w for w in counted.get("warnings", [])
@@ -563,6 +565,8 @@ def main():
     ap.add_argument("--v3-verdicts", action="store_true",
                     help="level-1 window-reduction instruction (scalar nl.sum + element assignment "
                          "-> tensor_reduce into a (C,1) tile), from E1/C1 transcripts")
+    ap.add_argument("--v4-verdicts", action="store_true",
+                    help="level-5 traffic instruction: name the lhsT load that must leave the n loop")
     ap.add_argument("--directional", action="store_true",
                     help="numerical feedback names the direction of the error, never the target "
                          "value (nkibench.DIRECTIONAL)")
@@ -573,6 +577,7 @@ def main():
     nkibench.DIRECTIONAL = a.directional
     verdicts.V2 = a.v2_verdicts
     verdicts.V3 = a.v3_verdicts
+    verdicts.V4 = a.v4_verdicts
 
     if not a.offline:
         # Validate before the first request. An empty or scheme-less value produces a hostname

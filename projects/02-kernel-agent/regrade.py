@@ -25,6 +25,7 @@ def main(paths):
     # reward): --v2 / --v3 / --directional on the command line, mirroring agent.py's switches.
     verdicts.V2 = "--v2" in sys.argv
     verdicts.V3 = "--v3" in sys.argv
+    verdicts.V4 = "--v4" in sys.argv
     nkibench.DIRECTIONAL = "--directional" in sys.argv
     paths = [p for p in paths if not p.startswith("--")]
     rows, cache = [], {}

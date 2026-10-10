@@ -129,6 +129,29 @@ def _i_window_reduce(code):
             "w:w+1], src=s). Keep the partition axis whole (':') and drop any loop over it.")
 
 
+# v4 (C3): level 5's verdict "hoist the operand loads out of the innermost loop" is ambiguous for
+# the structure the model actually has (loop m > n > k, both loads inside k): the innermost loop is
+# k, but the load that must move is lhsT, OUT OF THE n LOOP, because lhsT[k.., m..] does not depend
+# on n. Proved before use: the skeleton with exactly this change passes level 5 4/4 under the bar,
+# and every held-out case (handwritten/sk5_hoisted.py).
+V4 = False
+
+
+def traffic_hint(code, level):
+    if not V4 or level != 5:
+        return ""
+    lines = (code or "").splitlines()
+    n_loop = next((i for i, l in enumerate(lines) if re.search(r"for\s+n\b", l)), None)
+    lhs_load = next((i for i, l in enumerate(lines) if "dma_copy" in l and "lhsT[" in l), None)
+    if n_loop is None or lhs_load is None or lhs_load < n_loop:
+        return ""
+    return ("\n  CAUSE: the lhsT load is inside the n loop, but lhsT[k0:.., m0:..] does not depend on "
+            "n, so every n re-reads the same lhsT tiles. Move it OUT of the n loop: right after "
+            "computing m0 and m_sz, loop over k once, allocate each (k_sz, m_sz) lhsT tile, "
+            "dma_copy it, and append it to a Python list; inside the n loop use that list's k-th "
+            "tile as stationary. Keep loading the rhs tile inside the k loop. Change nothing else.")
+
+
 _PARTITION_COLLAPSED = re.compile(r"Partition dim size must be preserved, got (\d+) -> (\d+)")
 
 
@@ -354,6 +377,8 @@ def classify(feedback):
             return bucket
     if "must be reduced into a TILE, not a scalar" in fb:
         return "scalar_window_reduce"
+    if "the lhsT load is inside the n loop" in fb:
+        return "traffic_lhs_not_hoisted"
     if "lists the axes in the wrong order" in fb:
         return "swapped_axes"
     if _PARTITION_COLLAPSED.search(fb):
@@ -466,6 +491,18 @@ def selftest():
     ok = b == "tile_1d"
     bad += not ok
     print(f"  {'ok  ' if ok else 'FAIL'} v3 only on level 1       -> {b}")
+    global V4
+    V4 = True
+    l5 = ("for m in nl.affine_range(M):\n    for n in nl.affine_range(N):\n        for k in r:\n"
+          "            nisa.dma_copy(dst=a, src=lhsT[k0:k0 + k_sz, m0:m0 + m_sz])\n")
+    h = traffic_hint(l5, 5)
+    ok = "OUT of the n loop" in h and classify("CORRECT, BUT TOO MUCH" + h) == "traffic_lhs_not_hoisted"
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} v4 traffic hint (lhsT inside n loop)")
+    ok = traffic_hint(l5, 4) == "" and traffic_hint("for n in r:\n  pass\n", 5) == ""
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} v4 silent off-level / when already hoisted")
+    V4 = False
     V3 = False
     V2 = False
     b, _ = translate(err, code, 3)

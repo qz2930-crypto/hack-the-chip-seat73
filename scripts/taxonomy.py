@@ -55,6 +55,8 @@ DEFS = {
     "contraction_mismatch": ("nc_matmul operands disagree on K -- often nc_matmul used for a "
                              "non-matmul op", "same first dim for both operands, or do not use "
                              "nc_matmul for data movement"),
+    "traffic_lhs_not_hoisted": ("[L5] correct, but lhsT reloaded on every n: over the traffic bar",
+                                "load lhsT tiles once per m, before the n loop (--v4)"),
     "scalar_window_reduce": ("[L1] reduces each window to a scalar and assigns it element-wise",
                              "tensor_reduce into a (C,1) tile, tensor_copy into a column (--v3)"),
     "swapped_axes": ("slices an input with its axes in the wrong order (lhsT[m.., k..])",

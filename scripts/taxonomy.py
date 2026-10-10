@@ -55,6 +55,10 @@ DEFS = {
     "contraction_mismatch": ("nc_matmul operands disagree on K -- often nc_matmul used for a "
                              "non-matmul op", "same first dim for both operands, or do not use "
                              "nc_matmul for data movement"),
+    "swapped_axes": ("slices an input with its axes in the wrong order (lhsT[m.., k..])",
+                     "name the slice and give the right index order (--v2-verdicts)"),
+    "partition_collapsed": ("loops over / single-indexes the partition axis, collapsing it",
+                            "keep the partition axis whole with ':'; no loop over it (--v2-verdicts)"),
     "dma_shape_mismatch": ("dma_copy src and dst hold different numbers of elements",
                            "allocate the tile with exactly the slice's shape"),
     "assign_shape_mismatch": ("assigns a value into a slice of a different shape",

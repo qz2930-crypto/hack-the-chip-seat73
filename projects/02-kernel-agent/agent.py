@@ -129,7 +129,7 @@ def grade(source, level):
                     f"CANNOT SIMULATE: {e}")
         except Exception as e:
             failures.append((nkibench.label(case, level),
-                             enrich(f"raised {type(e).__name__}: {e}")))
+                             enrich(f"raised {type(e).__name__}: {e}", source, level)))
             continue
         parts["runs"] = True
         m = (nkibench.check_inputs_untouched(before, args)
@@ -550,6 +550,9 @@ def main():
                          "first prompt (not a complete kernel)")
     ap.add_argument("--retrieve", action="store_true",
                     help="LEVER: append the AWS doc excerpt keyed by the failure bucket to repairs")
+    ap.add_argument("--v2-verdicts", action="store_true",
+                    help="code-aware translations found in E1 transcripts (swapped axes, "
+                         "collapsed partition axis)")
     ap.add_argument("--directional", action="store_true",
                     help="numerical feedback names the direction of the error, never the target "
                          "value (nkibench.DIRECTIONAL)")
@@ -558,6 +561,7 @@ def main():
     a = ap.parse_args()
     a.run_index = 0
     nkibench.DIRECTIONAL = a.directional
+    verdicts.V2 = a.v2_verdicts
 
     if not a.offline:
         # Validate before the first request. An empty or scheme-less value produces a hostname

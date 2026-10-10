@@ -55,6 +55,57 @@ def _real_signature(func_name):
     return ""
 
 
+# ---------------------------------------------------------------- v2: code-aware translations
+#
+# Added on seat 73 from E1 transcripts (LOG.md). Behind agent.py --v2-verdicts so the A/B rows
+# measured without them stay comparable. Each exists because the v1 instruction was TRUE BUT NOT
+# THE FIX for a failure we actually saw:
+#   * the model followed the skeleton exactly and wrote lhsT[m0:.., k0:..] (axes swapped); v1 said
+#     "derive bounds with min()", which it already did.
+#   * the model looped over the partition axis and indexed it away (in_tile[c, ...]); v1 had no
+#     translation at all for "Partition dim size must be preserved".
+V2 = False
+
+_INPUT_AXES = {lv: {"lhsT": ("K", "M"), "rhs": ("K", "N")} for lv in (3, 4, 5, 6, 7)}
+
+
+def _swapped_axes(code, level):
+    """Find a slice of an input whose first index variable names the WRONG axis, e.g. lhsT[m0:...]."""
+    out = []
+    for name, axes in _INPUT_AXES.get(level, {}).items():
+        for m in re.finditer(rf"\b{name}\[\s*([A-Za-z_]\w*)[^,\]]*,\s*([A-Za-z_]\w*)", code or ""):
+            first, second = m.group(1).lower(), m.group(2).lower()
+            if first.startswith(axes[1].lower()) and second.startswith(axes[0].lower()):
+                a0, a1 = axes[0].lower(), axes[1].lower()
+                good = f"{name}[{a0}0:{a0}0 + {a0}_sz, {a1}0:{a1}0 + {a1}_sz]"
+                out.append((name, axes, m.group(0), good))
+    return out
+
+
+def _v2(bucket, m, text, code, level):
+    """Return (bucket, better instruction), or None to keep v1's."""
+    if bucket == "out_of_bounds":
+        sw = _swapped_axes(code, level)
+        if sw:
+            name, axes, seen, good = sw[0]
+            return ("swapped_axes",
+                    f" The slice `{seen}...` lists the axes in the wrong order. `{name}` has shape "
+                    f"[{axes[0]}, {axes[1]}], so its FIRST index must be the {axes[0]} range: write "
+                    f"`{good}`. Change only that slice; everything else is right.")
+    return None
+
+
+_PARTITION_COLLAPSED = re.compile(r"Partition dim size must be preserved, got (\d+) -> (\d+)")
+
+
+def _i_partition_collapsed(m, t):
+    return (" You indexed the PARTITION axis (the first one) with a single index, e.g. "
+            "in_tile[c, ...], which collapses it. Never loop over the partition axis and never "
+            "index it with one number: keep it whole with `:` and let the engine process every "
+            "partition at once, e.g. in_tile[:, h*p:(h+1)*p, w*p:(w+1)*p]. Remove the loop over "
+            "that axis. Do not reshape tiles.")
+
+
 # ---------------------------------------------------------------- raw error -> instruction
 #
 # (bucket, pattern, instruction builder). First match wins, so order matters exactly as it did in
@@ -205,18 +256,27 @@ RULES = [
 _COMPILED = [(b, re.compile(p, re.S), f) for b, p, f in RULES]
 
 
-def translate(error_text):
-    """(bucket, error_text + instruction). Unknown errors pass through with bucket 'raised_other'."""
+def translate(error_text, code=None, level=None):
+    """(bucket, error_text + instruction). Unknown errors pass through with bucket 'raised_other'.
+    With V2 on and the code/level supplied, code-aware rules may replace the v1 instruction."""
+    if V2:
+        m = _PARTITION_COLLAPSED.search(error_text)
+        if m:
+            return "partition_collapsed", error_text + _i_partition_collapsed(m, error_text)
     for bucket, rx, build in _COMPILED:
         m = rx.search(error_text)
         if m:
+            if V2 and code is not None:
+                better = _v2(bucket, m, error_text, code, level)
+                if better:
+                    return better[0], error_text + better[1]
             return bucket, error_text + build(m, error_text)
     return "raised_other", error_text
 
 
-def enrich(error_text):
-    """Drop-in for upstream agent.enrich()."""
-    return translate(error_text)[1]
+def enrich(error_text, code=None, level=None):
+    """Drop-in for upstream agent.enrich(); code/level enable the v2 rules when V2 is on."""
+    return translate(error_text, code, level)[1]
 
 
 # ---------------------------------------------------------------- any feedback -> bucket
@@ -255,6 +315,10 @@ def classify(feedback):
     for bucket, pat in _STAGES:
         if re.search(pat, fb, re.S):
             return bucket
+    if "lists the axes in the wrong order" in fb:
+        return "swapped_axes"
+    if _PARTITION_COLLAPSED.search(fb):
+        return "partition_collapsed"
     m = re.search(r"raised (\w+): (.*)", fb, re.S)
     if m:
         return translate(m.group(0))[0]
@@ -327,6 +391,32 @@ def selftest():
         got = classify(fb)
         bad += got != want
         print(f"  {'ok  ' if got == want else 'FAIL'} classify  -> {got:28s} {fb[:60]}")
+    global V2
+    V2 = True
+    code = "nisa.dma_copy(dst=t, src=lhsT[m0:m0 + m_sz, k0:k0 + k_sz])"
+    err = ("AssertionError: Out-of-bound access for tensor `unnamed` on dimension 1: index range "
+           "[0, 127] exceed dimension size of 64")
+    b, txt = translate(err, code, 3)
+    ok = b == "swapped_axes" and "lhsT[k0:k0 + k_sz, m0:m0 + m_sz]" in txt
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} v2 swapped axes        -> {b}")
+    b, _ = translate(err, "lhsT[k0:k0 + k_sz, m0:m0 + m_sz]", 3)
+    ok = b == "out_of_bounds"
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} v2 correct order kept  -> {b}")
+    b, txt = translate("AssertionError: Partition dim size must be preserved, got 1 -> 4")
+    ok = b == "partition_collapsed" and "keep it whole" in txt
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} v2 partition collapsed -> {b}")
+    ok = classify("0 of 4 shapes passed. On x: raised AssertionError: Partition dim size must be "
+                  "preserved, got 1 -> 4 You indexed") == "partition_collapsed"
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} v2 classify partition_collapsed")
+    V2 = False
+    b, _ = translate(err, code, 3)
+    ok = b == "out_of_bounds"
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} v2 off -> v1 unchanged ({b})")
     print("VERDICTS SELFTEST " + ("PASSED" if not bad else f"FAILED ({bad})"))
     return bad
 

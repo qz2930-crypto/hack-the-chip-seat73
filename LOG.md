@@ -176,3 +176,4 @@ Every decision, run and dead end, written as it happens.
   - a softmax op-sequence hint.
   - **Verified in the pod: 0 lint FPs on correct kernels; the L8 prompt changes and the L1 prompt is untouched; it fires on 22/22 of C10's L8 attempts.**
   - **C11 = C10 + v10 on ALL levels L1–L8 × 5** (L8 12 rounds), across 5 seats, so the final row is one configuration. Data cut-off 18:00.
+- **16:46** **Found: upstream's .gitignore excluded `runs/`, so NO attempt log had reached GitHub** (they existed only on the laptop and the pods). Now tracked; only the live mirror `runs/live/` stays ignored. 850 files / ~10 MB of snapshots committed. The attempt log is a README deliverable.

@@ -12,7 +12,9 @@ RUN-OF-DAY.md
 heldout*.json
 floor.lock.json
 levers.json
-runs/
+# runs/ is the attempt-log deliverable (README Part 4): tracked. Only the live mirror is ignored;
+# it is snapshotted into runs/<HHMM>_<label>/ at each decision.
+runs/live/
 .DS_Store
 
 # editor swap/backup files — a vim session got one of these committed once

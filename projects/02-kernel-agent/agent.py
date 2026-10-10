@@ -142,6 +142,8 @@ def grade(source, level):
              or nkibench.check_traffic_bar(level, counted, args, want))
         if m and m.startswith("NUMERICAL MISMATCH"):
             m += verdicts.code_hint(source, level)       # '' unless --v2-verdicts finds a cause
+        if m and m.startswith("NON-FINITE OUTPUT"):
+            m += verdicts.nonfinite_hint(source)          # '' unless --v6-verdicts finds a cause
         if m and m.startswith("CORRECT, BUT TOO MUCH HBM TRAFFIC"):
             m += verdicts.traffic_hint(source, level)    # '' unless --v4-verdicts finds a cause
         # A simulator warning about a hardware-correctness hazard counts as a failure even when the
@@ -156,7 +158,7 @@ def grade(source, level):
             failures.append((nkibench.label(case, level), m))
             continue
         passed += 1
-        if level >= 3 and counted["bytes"]:
+        if level >= 3 and counted["bytes"] and "M" in case:   # matmul shapes only (L8 has seq/dim)
             intensity = nkibench.roofline(
                 nkibench.matmul_flops(case["M"], case["K"], case["N"]), counted["bytes"])
 
@@ -569,6 +571,8 @@ def main():
                     help="level-5 traffic instruction: name the lhsT load that must leave the n loop")
     ap.add_argument("--v5-verdicts", action="store_true",
                     help="levels 5-7 traffic instruction: load every operand tile exactly once")
+    ap.add_argument("--v6-verdicts", action="store_true",
+                    help="NaN from exp without max-subtraction is an overflow, say so")
     ap.add_argument("--directional", action="store_true",
                     help="numerical feedback names the direction of the error, never the target "
                          "value (nkibench.DIRECTIONAL)")
@@ -581,6 +585,7 @@ def main():
     verdicts.V3 = a.v3_verdicts
     verdicts.V4 = a.v4_verdicts
     verdicts.V5 = a.v5_verdicts
+    verdicts.V6 = a.v6_verdicts
 
     if not a.offline:
         # Validate before the first request. An empty or scheme-less value produces a hostname

@@ -73,6 +73,28 @@ def {entry}(lhsT, rhs):
 '''
 
 
+_SK_ATTN = '''@nki.jit
+def nki_attention_(q, k, v):
+    S, D = q.shape                            # S, D <= 128: every operand is ONE tile
+    out = nl.ndarray((S, D), dtype=q.dtype, buffer=nl.shared_hbm)
+    q_t = nl.ndarray((S, D), dtype=q.dtype, buffer=nl.sbuf)
+    k_t = nl.ndarray((S, D), dtype=k.dtype, buffer=nl.sbuf)
+    v_t = nl.ndarray((S, D), dtype=v.dtype, buffer=nl.sbuf)
+    nisa.dma_copy(dst=q_t, src=q)
+    nisa.dma_copy(dst=k_t, src=k)
+    nisa.dma_copy(dst=v_t, src=v)
+    # TODO: qT and kT of shape (D, S) in SBUF -- nisa.nc_transpose into a psum tile, then
+    #       nisa.tensor_copy to sbuf (no .T on the inputs)
+    # TODO: scores (S, S) = nisa.nc_matmul(dst=psum, stationary=qT, moving=kT), scaled by 1/sqrt(D)
+    # TODO: softmax over the last axis of scores into p (S, S) in SBUF, using nisa.tensor_reduce,
+    #       nisa.tensor_scalar, nisa.activation(op=nl.exp) and nisa.reciprocal
+    # TODO: pT (S, S) = p transposed the same way as qT
+    # TODO: o (S, D) = nisa.nc_matmul(dst=psum, stationary=pT, moving=v_t); copy to SBUF, then
+    #       nisa.dma_copy it into out
+    return out
+'''
+
+
 def skeleton(level):
     entry = nkibench.LEVELS[level]["entry"]
     if level == 1:
@@ -81,6 +103,8 @@ def skeleton(level):
         body = _SK_TRANSPOSE
     elif 3 <= level <= 7:
         body = _SK_MATMUL.format(entry=entry)
+    elif level == 8:
+        body = _SK_ATTN
     else:
         return ""
     return ("Fill in this structure. Keep every line that is already written; replace each TODO "

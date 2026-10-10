@@ -173,6 +173,22 @@ def traffic_hint(code, level):
             "tile as stationary. Keep loading the rhs tile inside the k loop. Change nothing else.")
 
 
+# v6 (C6): nkibench says NON-FINITE output is "usually an uninitialised tile". For a kernel that
+# calls exp() with no row-max subtraction the cause is OVERFLOW (measured: the naive L8 kernel
+# passes every public shape and returns 16384 NaN on x30 inputs).
+V6 = False
+
+
+def nonfinite_hint(code):
+    if not V6 or "exp" not in (code or "") or (re.search(r"nl.maximum", code or "")
+                                                and re.search(r"nl.subtract", code or "")):
+        return ""
+    return ("\n  CAUSE: exp() overflowed. Before the exp, compute each row's maximum with "
+            "nisa.tensor_reduce(dst=mx, data=scores, op=nl.maximum, axis=(1,)) into a (rows, 1) tile "
+            "and subtract it: nisa.tensor_scalar(dst=shifted, data=scores, op0=nl.subtract, "
+            "operand0=mx). Then exp the shifted scores. The result is mathematically identical.")
+
+
 _PARTITION_COLLAPSED = re.compile(r"Partition dim size must be preserved, got (\d+) -> (\d+)")
 
 
@@ -398,6 +414,8 @@ def classify(feedback):
             return bucket
     if "must be reduced into a TILE, not a scalar" in fb:
         return "scalar_window_reduce"
+    if "exp() overflowed" in fb:
+        return "exp_overflow"
     if "Load every operand tile exactly ONCE" in fb:
         return "traffic_reloads"
     if "the lhsT load is inside the n loop" in fb:

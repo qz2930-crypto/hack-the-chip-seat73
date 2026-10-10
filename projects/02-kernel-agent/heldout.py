@@ -72,6 +72,17 @@ for _lv in (5, 6, 7):
     HELDOUT[_lv] = HELDOUT[4]
 
 
+def _x30(args):
+    return tuple(a * 30.0 if isinstance(a, np.ndarray) else a for a in args)
+
+
+# level 8's trap: large scores overflow a naive exp(); a kernel without max-subtraction returns NaN
+HELDOUT[8] = [(dict(seq=128, dim=128), _x30, "x30 inputs: scores ~1e3, naive exp overflows"),
+              (dict(seq=1, dim=8), None, "seq=1"),
+              (dict(seq=127, dim=1), None, "dim=1, seq prime"),
+              (dict(seq=32, dim=16), _const_row, "constant row")]
+
+
 def _run_case(kernel, level, spec, transform):
     args, _ = nkibench.make_inputs(spec, level, seed=1000)
     if transform:
@@ -130,8 +141,14 @@ def confidence(src, level, hazards=0):
     if any(re.search(r"%|==", ast.unparse(a.test)) for a in asserts):
         c *= 0.4
         why.append("asserts on input shape (refuses shapes outside the public set)")
+    # the stable form needs BOTH a row max and a subtraction of it (a computed-but-unused max is
+    # exactly the naive kernel in handwritten/sk8_attention_NAIVE_overflows.py)
+    if level == 8 and not (re.search(r"nl.maximum", src) and re.search(r"nl.subtract", src)):
+        c *= 0.3
+        why.append("no row-max subtraction before exp: large scores overflow to NaN")
     remainder = re.search(r"\bmin\(|%|\+ *\w+ *- *1\) *//|-\(-", src)
-    if level != 3 and not remainder and not _public_has_ragged(level):
+    # levels 3 and 8 are single-tile by definition, so ragged handling is not a hazard there
+    if level not in (3, 8) and not remainder and not _public_has_ragged(level):
         c *= 0.5
         why.append("no remainder handling, and no public shape had a partial tile")
     public_dims = set()
@@ -143,7 +160,7 @@ def confidence(src, level, hazards=0):
     lits = {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant)
             and isinstance(n.value, int)}
     hard = sorted(lits & public_dims)
-    if hard and level != 3:
+    if hard and level not in (3, 8):
         c *= 0.7
         why.append(f"hard-coded public dimensions {hard}")
     if hazards:

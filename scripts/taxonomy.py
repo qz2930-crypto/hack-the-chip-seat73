@@ -55,6 +55,8 @@ DEFS = {
     "contraction_mismatch": ("nc_matmul operands disagree on K -- often nc_matmul used for a "
                              "non-matmul op", "same first dim for both operands, or do not use "
                              "nc_matmul for data movement"),
+    "exp_overflow": ("[L8] NaN because exp() overflowed (no row-max subtraction)",
+                     "subtract the row max before exp (--v6)"),
     "traffic_reloads": ("[L5-7] correct, but operand tiles copied from HBM more than once",
                         "load every tile once into a[k][m] / b[k][n], then only matmul (--v5)"),
     "traffic_lhs_not_hoisted": ("[L5] correct, but lhsT reloaded on every n: over the traffic bar",

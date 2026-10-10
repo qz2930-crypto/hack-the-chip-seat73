@@ -774,7 +774,7 @@ def verify(path, level_n, tol=2e-2, seed=0):
             if rep:
                 print(f"\n  case {label(case, level_n)}:")
                 print(rep)
-        if level_n >= 3 and counted["bytes"]:
+        if level_n >= 3 and counted["bytes"] and "M" in case:   # matmul shapes only (L8 has seq/dim)
             f = matmul_flops(case["M"], case["K"], case["N"])
             intensities.append((label(case, level_n), roofline(f, counted["bytes"]),
                                 counted, f, minimum_hbm_bytes(args, want)))

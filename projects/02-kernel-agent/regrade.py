@@ -27,6 +27,7 @@ def main(paths):
     verdicts.V3 = "--v3" in sys.argv
     verdicts.V4 = "--v4" in sys.argv
     verdicts.V5 = "--v5" in sys.argv
+    verdicts.V6 = "--v6" in sys.argv
     nkibench.DIRECTIONAL = "--directional" in sys.argv
     paths = [p for p in paths if not p.startswith("--")]
     rows, cache = [], {}
